@@ -7,6 +7,7 @@ from tqdm import tqdm
 from dotenv import load_dotenv
 from utils.make_config import load_json, save_json
 import json
+import yaml
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
 from dataloader.data_multi import PairedImageDataset as Dataset
@@ -31,24 +32,24 @@ def prepare_log(args):
 if __name__ == '__main__':
     parser = get_args()
 
-    # 1) Do a preliminary parse to get --jsn and any CLI overrides
+    # 1) Do a preliminary parse to get --yaml and any CLI overrides
     prelim_args = parser.parse_known_args()[0]
 
-    # 2) Load JSON config early to obtain defaults (including models)
-    with open('env/jsn/' + prelim_args.jsn + '.json', 'rt') as f:
+    # 2) Load YAML config early to obtain defaults (including models)
+    with open('env/' + prelim_args.yaml + '.yaml', 'rt') as f:
         json_args = argparse.Namespace()
-        json_args.__dict__.update(json.load(f)['train'])
+        json_args.__dict__.update(yaml.safe_load(f)['train'])
 
-    # 3) Resolve model name: CLI --models overrides JSON; otherwise use JSON
+    # 3) Resolve model name: CLI --models overrides YAML; otherwise use YAML
     models_name = getattr(prelim_args, 'models', None) or getattr(json_args, 'models', None)
     if models_name is None:
-        raise ValueError("Model name not specified. Provide --models on the CLI or set 'models' in the JSON under 'train'.")
+        raise ValueError("Model name not specified. Provide --models on the CLI or set 'models' in the YAML under 'train'.")
 
     # 4) Import model and augment parser with model-specific args
     GAN = getattr(__import__('models.' + models_name), models_name).GAN
     parser = GAN.add_model_specific_args(parser)
 
-    # 5) Final parse with JSON defaults as the namespace, allowing CLI to override
+    # 5) Final parse with YAML defaults as the namespace, allowing CLI to override
     args = parser.parse_args(namespace=json_args)
 
     # environment file

@@ -1,1 +1,1 @@
-NO_ALBUMENTATIONS_UPDATE=1 python train.py --jsn aisr_maxl1 --prj dist2/max10skip4
+NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj 0/max10skip4 --env brcb

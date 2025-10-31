@@ -5,7 +5,7 @@ def get_args():
     # Arguments
     parser = argparse.ArgumentParser()
     # Env
-    parser.add_argument('--jsn', type=str, default='default', help='name of ini file')
+    parser.add_argument('--yaml', type=str, default='default', help='name of yaml config file')
     parser.add_argument('--env', type=str, default=None, help='environment_to_use')
 
     # Project name

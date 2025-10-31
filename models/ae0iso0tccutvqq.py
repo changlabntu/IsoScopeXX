@@ -22,7 +22,7 @@ class GAN(BaseModel):
         BaseModel.__init__(self, hparams, train_loader, eval_loader, checkpoints)
 
         # VQGAN Model
-
+        
         # Initialize encoder and decoder
         print('Reading yaml: ' + self.hparams.ldmyaml)
         with open('ldm/' + self.hparams.ldmyaml + '.yaml', "r") as f:
@@ -135,11 +135,8 @@ class GAN(BaseModel):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = parent_parser.add_argument_group("VQGAN")
-        parser.add_argument("--embed_dim", type=int, default=256)
-        parser.add_argument("--n_embed", type=int, default=1024)
         parser.add_argument("--ldmyaml", type=str, default='ldmaex2')
         parser.add_argument("--skipl1", type=int, default=4)
-        parser.add_argument("--hbranch", type=str, default='mid')
         parser.add_argument("--tc", action="store_true", default=False)
         parser.add_argument("--l1how", type=str, default='dsp')
         parser.add_argument("--dsp", type=int, default=1, help='extra downsample rate')

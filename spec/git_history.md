@@ -1,6 +1,11 @@
 # Git History - IsoScopeXX Project
 
-This file tracks all significant git operations and commits for the IsoScopeXX project. Do not commit versions of this file
+1. This file tracks all significant git operations and commits for the IsoScopeXX project. 
+
+2. Do not commit versions of this file.
+
+3. Only add operation of commit, checkout, merge, and branch creation.
+
 
 [2025-10-30 10:15:23] git checkout -b feature-branch
   └─> Branch: feature-branch
@@ -14,3 +19,16 @@ This file tracks all significant git operations and commits for the IsoScopeXX p
   └─> Branch: main
 
 ---
+
+## Actual Git Operations
+
+[2025-10-30 18:29:25] git init
+  └─> Branch: main
+  └─> Action: Initialized empty Git repository
+
+[2025-10-30 18:29:34] git commit -m "Initial commit: IsoScopeXX project setup"
+  └─> Branch: main (root-commit)
+  └─> Commit: 5b9ca45
+  └─> Stats: 82 files changed, 20884 insertions(+)
+  └─> Summary: Complete VQGAN-based 3D medical image enhancement framework
+
