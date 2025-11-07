@@ -1,1 +1,1 @@
-NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj 0/max10skip4 --env brcb
+NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj default/max10skip4 --env t09

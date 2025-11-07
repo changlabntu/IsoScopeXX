@@ -15,29 +15,26 @@ from networks.networks_cut import Normalize, init_net, PatchNCELoss
 from torch.optim.lr_scheduler import LambdaLR
 from networks.networks import get_scheduler
 import os
+from pytorch_msssim import ms_ssim
 
 
 class GAN(BaseModel):
     def __init__(self, hparams, train_loader, eval_loader, checkpoints):
-        BaseModel.__init__(self, hparams, train_loader, eval_loader, checkpoints)
+        BaseModel.__init__(self, hparams, train_loader, eval_loader, checkpoints) 
 
         # VQGAN Model
-        
         # Initialize encoder and decoder
         print('Reading yaml: ' + self.hparams.ldmyaml)
         with open('ldm/' + self.hparams.ldmyaml + '.yaml', "r") as f:
             config = yaml.load(f, Loader=yaml.Loader)
-
         ddconfig = config['model']['params']["ddconfig"]
+
         if self.hparams.tc:
             ddconfig['in_channels'] = 2
             ddconfig['out_ch'] = 1
-        self.hparams.netG = ddconfig['interpolator']
+        self.hparams.netG = self.hparams.netG
 
         self.hparams.final = 'tanh'
-        if self.hparams.tc:
-            self.hparams.input_nc = 1
-            self.hparams.output_nc = 2
         self.net_g, self.net_d = self.set_networks()
 
         # VQGAN components
@@ -135,12 +132,21 @@ class GAN(BaseModel):
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = parent_parser.add_argument_group("VQGAN")
-        parser.add_argument("--ldmyaml", type=str, default='ldmaex2')
         parser.add_argument("--skipl1", type=int, default=4)
         parser.add_argument("--tc", action="store_true", default=False)
         parser.add_argument("--l1how", type=str, default='dsp')
         parser.add_argument("--dsp", type=int, default=1, help='extra downsample rate')
         parser.add_argument("--usp", type=float, default=1.0, help='extra upsample rate')
+        parser.add_argument("--downbranch", type=int, default=1)
+        parser.add_argument("--resizebranch", type=int, default=1)
+        parser.add_argument('--lbm_ms_ssim', type=float, default=0, help='weight for ms_ssim loss')
+        # VQ specific arguments
+        parser.add_argument("--ldmyaml", type=str, default='vqgan')
+        parser.add_argument("--use_ema", action='store_true', help='use exponential moving average')
+        parser.add_argument("--remap", type=str, default=None, help='remap indices')
+        parser.add_argument("--sane_index_shape", action='store_true', help='return indices as bhw')
+        parser.add_argument("--lr_g_factor", type=float, default=1.0, help='learning rate factor for generator')
+        # CUT specific arguments
         parser.add_argument("--nocut", action='store_true')
         parser.add_argument('--num_patches', type=int, default=256, help='number of patches per layer')
         parser.add_argument('--lbNCE', type=float, default=0, help='weight for NCE loss: NCE(G(X), X)')
@@ -151,13 +157,6 @@ class GAN(BaseModel):
         parser.add_argument('--use_mlp', action='store_true')
         parser.add_argument("--c_mlp", dest='c_mlp', type=int, default=256, help='channel of mlp')
         parser.add_argument('--fWhich', nargs='+', help='which layers to have NCE loss', type=int, default=None)
-        parser.add_argument("--downbranch", type=int, default=1)
-        parser.add_argument("--resizebranch", type=int, default=1)
-        # VQ specific arguments
-        parser.add_argument("--use_ema", action='store_true', help='use exponential moving average')
-        parser.add_argument("--remap", type=str, default=None, help='remap indices')
-        parser.add_argument("--sane_index_shape", action='store_true', help='return indices as bhw')
-        parser.add_argument("--lr_g_factor", type=float, default=1.0, help='learning rate factor for generator')
         return parent_parser
 
     def encode(self, x):
@@ -282,6 +281,18 @@ class GAN(BaseModel):
                                                                           * self.hparams.skipl1,
                                                          how=self.hparams.l1how),
                                    b=self.oriX[:, :, :, :, ::self.hparams.skipl1])
+
+        # ms_ssim in ZY
+        if self.hparams.lbm_ms_ssim > 0:
+        # (1, C, X, Y, Z)
+            loss_ms_ssim = 1 - ms_ssim(self.XupX.permute(2, 1, 4, 3, 0)[:, :, :, :, 0],  # (X, C, Z, Y)
+                                    self.Xup.permute(2, 1, 4, 3, 0)[:, :, :, :, 0],  # (X, C, Z, Y)
+                                    data_range=2.0,
+                                    size_average=True,
+                                    win_size=7,  # Smaller window
+                                    weights=[0.0448, 0.2856, 0.6696])
+            loss_dict['ms_ssim'] = loss_ms_ssim
+            loss_g += loss_ms_ssim * self.hparams.lbm_ms_ssim # Add weight parameter
 
         loss_dict['axx'] = axx
         loss_g += axx

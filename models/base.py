@@ -151,7 +151,7 @@ class BaseModel(pl.LightningModule):
         # Save the image
         img.save(path)
 
-    def configure_optimizers(self):
+    def configure_optimizers(self):  ## THIS IS REQUIRED
         print('configuring optimizer being called....')
         print(self.netg_names.keys())
         print(self.netd_names.keys())
@@ -201,7 +201,7 @@ class BaseModel(pl.LightningModule):
             writer = csv.writer(f)
             writer.writerow(auc)
 
-    def training_step(self, batch, batch_idx, optimizer_idx):
+    def training_step(self, batch, batch_idx, optimizer_idx):  ## THIS IS REQUIRED
         if optimizer_idx == 1:
             self.generation(batch)
             loss_d = self.backward_d()
@@ -249,8 +249,10 @@ class BaseModel(pl.LightningModule):
 
         if self.epoch % 20 == 0 :
             #  # (B, C, X, Y, Z)
+            print_ori = np.concatenate([self.Xup[:, c, ::].squeeze().detach().cpu().numpy() for c in range(self.XupX.shape[1])], 1)
+            print_enc = np.concatenate([self.XupX[:, c, ::].squeeze().detach().cpu().numpy() for c in range(self.Xup.shape[1])], 1)
             tiff.imwrite('out/epoch_{}.tif'.format(self.epoch),
-                         np.concatenate([self.XupX[:, :1, ::].squeeze().detach().cpu().numpy(), self.Xup[:, :1, ::].squeeze().detach().cpu().numpy()], 2))
+                         np.concatenate([print_ori, print_enc], 2))
 
         self.epoch += 1
 

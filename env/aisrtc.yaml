@@ -26,13 +26,13 @@ train:
   cropz: 16
   cropsize: 128
   env: brcb
-  direction: x3d0
+  direction: x3d0_x3d1
   dataset: X2527T102MM
   lamb: 10
   nocut: true
   lbNCE: 0
   skipl1: 4
   l1how: max
-  tc: false
-  input_nc: 1
-  output_nc: 1
+  tc: true
+  input_nc: 2
+  output_nc: 2

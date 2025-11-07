@@ -32,3 +32,22 @@
   └─> Stats: 82 files changed, 20884 insertions(+)
   └─> Summary: Complete VQGAN-based 3D medical image enhancement framework
 
+[2025-10-31 19:12:30] git commit -m "start fixing OmegaConf"
+  └─> Branch: main
+  └─> Commit: d58228c
+  └─> Stats: 8 files changed, 69 insertions(+), 59 deletions(-)
+  └─> Summary: Migrate from JSON to YAML configuration
+  └─> Changes:
+      • Created env/aisr.yaml (YAML config)
+      • Deleted env/jsn/aisr.json
+      • Removed unused --hbranch argument from ae0iso0tccutvqq.py
+      • Updated train.py to use yaml.safe_load() instead of json.load()
+      • Changed --jsn argument to --yaml in utils/get_args.py
+      • Updated run.sh to use --yaml flag
+
+[2025-10-31 19:52:00] git reset --hard HEAD
+  └─> Branch: main
+  └─> Action: Reset to commit d58228c (start fixing OmegaConf)
+  └─> Summary: Reverted uncommitted OmegaConf experimental changes
+  └─> Note: Decided to keep simpler YAML approach without OmegaConf for now
+
