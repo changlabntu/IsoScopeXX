@@ -29,7 +29,7 @@ train:
   direction: x3d0
   dataset: X2527T102MM
   lamb: 10
-  nocut: true
+  nocut: false
   lbNCE: 0
   skipl1: 4
   l1how: max
