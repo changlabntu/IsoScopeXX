@@ -10,6 +10,8 @@ Self-supervised **isotropic super-resolution + compression** for expansion micro
 
 The anisotropy the model corrects is **created in-model at train time** by subsampling Z (`--dsp`, `--cropz`), so a single isotropic dataset is enough.
 
+**Multi-view fused data** (`E2507218fuse`, `--direction zcube_xcube_ycube`) is a newer regime where the anisotropy is *real*, not faked: three registered optical-sectioning views of the same sample, each 8× low-res along a different axis (zcube→Z, xcube→X, ycube→Y). The HR-Z structure missing from zcube is present in xcube/ycube, enabling **real projection supervision** of the Z output. See `docs/fuse_data.md` for the axis mapping, the registration/photometry caveats, and how to wire the X/Y projection losses.
+
 ## Running training
 
 There is no build step and no test suite. The entry point is `train.py`, usually launched via copy-pasting a line from `run.sh` (most lines there are commented-out experiment history; the **last uncommented line is the current focused experiment**).

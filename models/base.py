@@ -335,10 +335,16 @@ class BaseModel(pl.LightningModule):
         if not (hasattr(self, 'Xup') and hasattr(self, 'XupX')):
             return None
 
-        # Store first batch for artifact logging (rank 0 only)
+        # Store first batch for artifact logging (rank 0 only).
+        # Order for the GIF: data0 (input) -> enhanced -> data1 -> data2 -> ...
+        # Extra views (xcube/ycube/...) are interpolated to the output shape so the
+        # panels concatenate cleanly; single-view runs just give [input, enhanced].
         if batch_idx == 0 and self.trainer.is_global_zero:
-            self.val_Xup = self.Xup.detach().clone()
-            self.val_XupX = self.XupX.detach().clone()
+            views = [self.Xup.detach().clone(), self.XupX.detach().clone()]
+            for v in getattr(self, 'aux_views', []):
+                v = nn.functional.interpolate(v, size=self.XupX.shape[2:], mode='trilinear')
+                views.append(v.detach().clone())
+            self.val_views = views
 
         def to_rgb(t):
             return t.repeat(1, 3, 1, 1) if t.shape[1] == 1 else t
@@ -377,13 +383,16 @@ class BaseModel(pl.LightningModule):
         self.log('val_kid', kid_mean, logger=True, sync_dist=True)
         self.kid.reset()
 
-        # Log a GIF from validation's first batch (stored in validation_step), every 5 epochs
+        # Log a GIF from validation's first batch (stored in validation_step), every 5 epochs.
+        # Panels are laid out left-to-right as data0 (input) | enhanced | data1 | data2 | ...
         if (self.epoch % 5 == 0 and self.trainer.is_global_zero
-                and hasattr(self, 'val_Xup') and hasattr(self, 'val_XupX')):
-            # (B, C, X, Y, Z) - original vs prediction from the first validation batch
-            print_ori = np.concatenate([self.val_Xup[:, c, ::].squeeze().detach().cpu().numpy() for c in range(self.val_Xup.shape[1])], 1)
-            print_enc = np.concatenate([self.val_XupX[:, c, ::].squeeze().detach().cpu().numpy() for c in range(self.val_XupX.shape[1])], 1)
-            concat_arr = np.concatenate([print_ori, print_enc], 2)
+                and hasattr(self, 'val_views') and len(self.val_views) >= 2):
+            def to_panel(t):
+                # (B, C, X, Y, Z) -> (X, C*Y, Z): channels stacked vertically, Z is the frame width
+                return np.concatenate([t[:, c, ::].squeeze().detach().cpu().numpy()
+                                       for c in range(t.shape[1])], 1)
+            panels = [to_panel(v) for v in self.val_views]
+            concat_arr = np.concatenate(panels, 2)  # side by side along Z (frame width)
             self._log_gif_artifact(concat_arr, 'val')
 
         return None

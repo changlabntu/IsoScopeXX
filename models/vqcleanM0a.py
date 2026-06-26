@@ -256,6 +256,12 @@ class GAN(BaseModel):
             for b in range(len(batch['img'])):
                 batch['img'][b] = batch['img'][b][:, :, :, :, z_init:z_init + self.hparams.cropz]
 
+        # Keep all non-input views (data1, data2, ...) at full Z — captured before the
+        # `dsp` subsample so xcube/ycube retain their real HR-Z. Used for GIF logging
+        # (and available for projection supervision). The `dsp`/`usp` reassignments
+        # below replace batch['img'][b] with new tensors, so these references stay full-Z.
+        self.aux_views = [batch['img'][b] for b in range(1, len(batch['img']))]
+
         if self.hparams.dsp > 1:
             if deterministic:
                 z_init = 0

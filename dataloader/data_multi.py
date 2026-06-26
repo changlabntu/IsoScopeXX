@@ -1,5 +1,6 @@
 from os.path import join
 import glob
+import json
 import torch
 from torch import nn
 import torch.utils.data as data
@@ -71,8 +72,14 @@ class PairedImageDataset(data.Dataset):
         self.subset_indices = subset_indices
 
         # Set up paths
+        self.root = Path(root)
         self.paths = [Path(root) / x for x in path.split('_')]
         self._validate_paths()
+
+        # Load shared per-view normalization constants (precomputed sidecar JSON).
+        # Must happen BEFORE any _load_image call below (e.g. _get_resize_value),
+        # so the '11p' branch always has its stats ready.
+        self.norm_stats = self._load_norm_stats() if getattr(self.config, 'nm', None) == '11p' else None
 
         # Find common images across all directories
         self.image_names = self._get_common_images()
@@ -125,6 +132,30 @@ class PairedImageDataset(data.Dataset):
             additional_targets=additional_targets
         )[self.mode]
 
+    def _load_norm_stats(self) -> Dict[str, Tuple[float, float]]:
+        """Load precomputed per-view normalization constants from the sidecar JSON.
+
+        The file lives at `<dataset>/norm_stats.json` (the parent of train/ and val/),
+        so train and val datasets share the exact same constants. Generate it with
+        `python tools/compute_norm_stats.py --env <env> --dataset <dir>`.
+        """
+        stats_path = self.root.parent / 'norm_stats.json'
+        if not stats_path.is_file():
+            raise FileNotFoundError(
+                f"nm='11p' needs precomputed constants at {stats_path}. "
+                f"Run: python tools/compute_norm_stats.py --env <env> --dataset <dir>"
+            )
+        with open(stats_path) as f:
+            raw = json.load(f)
+        stats = raw.get('stats', raw)  # accept {"stats": {...}} or a flat {folder: [lo, hi]}
+        missing = [p.name for p in self.paths if p.name not in stats]
+        if missing:
+            raise KeyError(
+                f"{stats_path} is missing folders {missing}; has {sorted(stats.keys())}. "
+                f"Recompute it for direction '{'_'.join(p.name for p in self.paths)}'."
+            )
+        return {k: (float(v[0]), float(v[1])) for k, v in stats.items()}
+
     def _load_image(self, path: Path) -> np.ndarray:
         """Load and preprocess single image."""
         try:
@@ -138,18 +169,21 @@ class PairedImageDataset(data.Dataset):
         #if self.config.threshold > 0:
         #    img = np.clip(img, None, self.config.threshold)
 
-        # Normalize
-        img = self._normalize_image(img, method=self.config.nm)
+        # Normalize (key = source folder name, used by per-view '11p')
+        img = self._normalize_image(img, method=self.config.nm, key=Path(path).parent.name)
 
         return img
 
-    def _normalize_image(self, img: np.ndarray, method) -> np.ndarray:
+    def _normalize_image(self, img: np.ndarray, method, key: Optional[str] = None) -> np.ndarray:
         """Normalize image based on configuration."""
         if method == '01':  # 0 to 1
             img = (img - img.min()) / (img.max() - img.min())
         elif method == '11':  # -1 to 1
             img = (img - img.min()) / (img.max() - img.min())
             img = img * 2 - 1
+        elif method == '11p':  # -1 to 1 via shared per-view robust percentiles
+            lo, hi = self.norm_stats[key]
+            img = np.clip((img - lo) / (hi - lo + 1e-8), 0, 1) * 2 - 1
         elif method == '00':
             pass
         return img
