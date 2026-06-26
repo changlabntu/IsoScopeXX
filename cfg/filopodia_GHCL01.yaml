@@ -1,0 +1,50 @@
+train:
+  # environment
+  env: GHCL01
+
+  # data
+  dataset: filopodia_9_R
+  direction: x3d0
+  cropsize: 128
+  cropz: 16
+  nm: "00"
+  rotate: true
+  resize: 0
+
+  # model
+  models: ae0iso0tccutvqq
+  ldmyaml: vqgan
+  netG: ed023e
+  netD: patch_16
+  ngf: 32
+  ndf: 64
+  norm: batch
+  final: none
+  input_nc: 1
+  output_nc: 1
+  gan_mode: vanilla
+  mc: true
+
+  # training
+  n_epochs: 10001
+  batch_size: 1
+  lr: 0.0002
+  beta1: 0.5
+  lr_policy: cosine
+  n_epochs_decay: 100
+  lr_decay_iters: 50
+  epoch_save: 100
+  test_batch_size: 1
+
+  # loss
+  lamb: 7
+  adv: 1.0
+  skipl1: 8
+  l1how: max
+  lbNCE: 0
+  nocut: false
+  tc: false
+
+  # logging
+  prj: default
+  not_tracking_hparams: []

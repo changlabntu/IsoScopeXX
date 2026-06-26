@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# OS generated files
+.DS_Store
+*/.DS_Store
+
+# IDE / Editor
+.idea/
+.vscode/
+.claude/
+.ipynb_checkpoints/
+
+# Data & model artifacts
+*.tif
+*.pth
+*.png
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Logs and outputs
+out/
+screenshots/
+dataset/
+logs/
+result/
+outputs/
+forpaper/
+postprocessing/
+notinuse/
+submodels/
+models/old/
+Untitled/
+
+# Packaging
+.Python
+.neptune/
