@@ -70,3 +70,11 @@ the Z super-resolution with **real** data. Caveats:
 - Pixelwise projection L1 against xcube/ycube *is* valid here (registration is correct);
   the only blocker is photometry. They can alternatively/additionally feed the six-way
   discriminator as a real HR-Z slice distribution.
+
+## Implemented in `models/vqcleanM0aSup0.py`
+
+Supervised variant of `vqcleanM0a`. `generation()` captures the non-input views at
+full Z (`self.aux_views`, before the `dsp` subsample), and `backward_g` adds the X/Y
+projection terms: mean-pool `XupX` by `--aniso` (=8) along dim3 / dim2 and L1 against
+the same pool of xcube / ycube, weighted by `--lamb_xy`. Run with
+`--direction zcube_xcube_ycube --nm 11p --models vqcleanM0aSup0` (see `run.sh`).
