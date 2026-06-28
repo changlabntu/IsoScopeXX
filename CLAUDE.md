@@ -70,7 +70,7 @@ Each run snapshots `config.json`, the active `cfg/*.yaml`, and the model's `.py`
 
 ## Conventions & gotchas
 
-- **Volume tensor layout is `(B, C, X, Y, Z)`**, and code frequently `.permute(...)`s to pull a given axis to the front as a 2D batch. When editing model math, track which axis is being treated as the slice/batch dimension.
+- **Volume tensor layout is `(B, C, Y, X, Z)`** (dim2=Y, dim3=X, dim4=Z). TIFFs are read as `(Z, Y, X)` and the loader moves the page/Z axis to **last** (`np.transpose(v,(1,2,0))` + `ToTensorV2` + `.permute(1,2,0)` in `dataloader/data_multi.py`), which is why `cropz`/`dsp` subsample dim4. Verified against `E2507218fuse` by per-axis gradient energy: zcube is low-res along dim4 (Z), xcube along dim3 (X), ycube along dim2 (Y) — matching `vqcleanM0aSup0`'s xcube→axis3 / ycube→axis2 projection. Code frequently `.permute(...)`s to pull a given axis to the front as a 2D batch; when editing model math, track which axis is the slice/batch dimension.
 - Argparse **abbreviations are enabled**: `--l1` resolves to `--l1how`. Be explicit to avoid silent collisions.
 - `accumulate_grad_batches=2` is hardcoded in `train.py`, so effective batch size is `2 × batch_size × n_gpus`.
 - No global seeding — runs are not bit-reproducible.

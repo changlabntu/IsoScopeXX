@@ -294,7 +294,7 @@ class GAN(BaseModel):
         else:
             self.oriX = batch['img'][0]
 
-        input_slice = self.oriX.permute(4, 1, 2, 3, 0)[:, :, :, :, 0]  # (Z, C, X, Y)
+        input_slice = self.oriX.permute(4, 1, 2, 3, 0)[:, :, :, :, 0]  # (Z, C, Y, X)
         if self.training:
             input_slice = input_slice.requires_grad_(True)
 
