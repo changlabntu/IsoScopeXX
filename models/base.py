@@ -366,25 +366,27 @@ class BaseModel(pl.LightningModule):
         self.log('val_lpips_pred', lpips_pred, on_step=False, on_epoch=True, logger=True, sync_dist=True)
 
         # Held-out real X/Y projection error (vqcleanM0aSup0-style). Mirrors backward_g's
-        # l1_x/l1_y: mean-pool XupX along dim3 (->xcube) and dim2 (->ycube) by --aniso and
-        # L1-match the real views. cropz is train-only, so at val the views' Z can differ
-        # from XupX by subsample rounding -> interpolate to XupX shape first (as the GIF
-        # does). Guarded so models without lamb_xy/get_projection are unaffected.
+        # l1_x/l1_y: pool XupX along dim3 (->xcube) and dim2 (->ycube) by --aniso (op =
+        # --l1how_xy) and L1-match the real views. cropz is train-only, so at val the
+        # views' Z can differ from XupX by subsample rounding -> interpolate to XupX shape
+        # first (as the GIF does). Guarded so models without lamb_xy/get_projection are
+        # unaffected.
         if (hasattr(self, 'get_projection') and getattr(self.hparams, 'lamb_xy', 0) > 0
                 and hasattr(self.hparams, 'aniso')
                 and len(getattr(self, 'aux_views', [])) >= 2):
             r = self.hparams.aniso
+            how_xy = getattr(self.hparams, 'l1how_xy', 'max')
             with torch.no_grad():
                 xcube = nn.functional.interpolate(self.aux_views[0], size=self.XupX.shape[2:],
                                                   mode='trilinear')
                 ycube = nn.functional.interpolate(self.aux_views[1], size=self.XupX.shape[2:],
                                                   mode='trilinear')
                 val_l1_x = self.add_loss_l1(
-                    a=self.get_projection(self.XupX, depth=r, how='mean', axis=3),
-                    b=self.get_projection(xcube, depth=r, how='mean', axis=3))
+                    a=self.get_projection(self.XupX, depth=r, how=how_xy, axis=3),
+                    b=self.get_projection(xcube, depth=r, how=how_xy, axis=3))
                 val_l1_y = self.add_loss_l1(
-                    a=self.get_projection(self.XupX, depth=r, how='mean', axis=2),
-                    b=self.get_projection(ycube, depth=r, how='mean', axis=2))
+                    a=self.get_projection(self.XupX, depth=r, how=how_xy, axis=2),
+                    b=self.get_projection(ycube, depth=r, how=how_xy, axis=2))
             self.log('val_l1_x', val_l1_x, on_step=False, on_epoch=True, logger=True, sync_dist=True)
             self.log('val_l1_y', val_l1_y, on_step=False, on_epoch=True, logger=True, sync_dist=True)
 

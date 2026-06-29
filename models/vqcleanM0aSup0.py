@@ -165,6 +165,9 @@ class GAN(BaseModel):
                             help='weight for xcube/ycube projection supervision (0 disables it)')
         parser.add_argument("--aniso", type=int, default=8,
                             help='anisotropy ratio of the fused views = pool factor for the X/Y projection')
+        parser.add_argument("--l1how_xy", type=str, default='max',
+                            help="pooling for the xcube/ycube X/Y projection supervision "
+                                 "('max' or 'mean'); match the views' physical forward model")
         return parent_parser
 
     def encode(self, x):
@@ -361,9 +364,10 @@ class GAN(BaseModel):
         loss_g += loss_l1 * self.hparams.lamb
 
         # Multi-view projection supervision: xcube is LR along tensor dim3 / HR in Z,
-        # ycube is LR along dim2 / HR in Z. Mean-projecting XupX along those axes by the
-        # anisotropy ratio and matching the real views supervises XupX's Z with genuine
-        # high-res structure (the pools keep Z full-res). aux_views are captured full-Z
+        # ycube is LR along dim2 / HR in Z. Projecting XupX along those axes by the
+        # anisotropy ratio (pool op = --l1how_xy) and matching the real views supervises
+        # XupX's Z with genuine high-res structure (the pools keep Z full-res). aux_views
+        # are captured full-Z
         # in generation(); --nm 11p puts all views on a shared intensity scale.
         if self.hparams.lamb_xy > 0 and len(getattr(self, 'aux_views', [])) >= 2:
             r = self.hparams.aniso
@@ -371,12 +375,13 @@ class GAN(BaseModel):
             assert self.XupX.shape[2:] == xcube.shape[2:] == ycube.shape[2:], \
                 (f"shape mismatch: XupX {tuple(self.XupX.shape)} "
                  f"xcube {tuple(xcube.shape)} ycube {tuple(ycube.shape)}")
+            how_xy = self.hparams.l1how_xy
             loss_l1_x = self.add_loss_l1(
-                a=self.get_projection(self.XupX, depth=r, how='mean', axis=3),
-                b=self.get_projection(xcube, depth=r, how='mean', axis=3))
+                a=self.get_projection(self.XupX, depth=r, how=how_xy, axis=3),
+                b=self.get_projection(xcube, depth=r, how=how_xy, axis=3))
             loss_l1_y = self.add_loss_l1(
-                a=self.get_projection(self.XupX, depth=r, how='mean', axis=2),
-                b=self.get_projection(ycube, depth=r, how='mean', axis=2))
+                a=self.get_projection(self.XupX, depth=r, how=how_xy, axis=2),
+                b=self.get_projection(ycube, depth=r, how=how_xy, axis=2))
             loss_dict['l1_x'] = loss_l1_x
             loss_dict['l1_y'] = loss_l1_y
             loss_g += (loss_l1_x + loss_l1_y) * self.hparams.lamb_xy
