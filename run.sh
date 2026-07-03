@@ -57,5 +57,9 @@
 #CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj msout/vqcleanM0aMS/Scale4/pyr1 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube --models vqcleanM0aMS --netG ed023ems --num_scales 4 --lamb 5 --lamb_pyr 1 --tracking_uri sqlite://///home/gary/workspace/logs/mlflow.db --cropsize 192 --cropz 192 --dsp 8 --lr 0.0005
 
 # fuse MS
-CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/vqcleanM0aMSadv0/Scale4/max5skip4 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube/ --lamb 5 --models vqcleanM0aMS --num_scales 4 --tracking_uri sqlite://///home/gary/workspace/logs/MS.db --cropsize 192 --cropz 192 --dsp 8 --lr 0.0005 --netG ed023ems --adv_ms 0
+CUDA_VISIBLE_DEVICES=2 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/vqcleanM0aMSadv0/Scale4/max5skip4 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube/ --lamb 5 --models vqcleanM0aMS --num_scales 4 --cropsize 192 --cropz 192 --dsp 8 --lr 0.0005 --netG ed023ems --adv_ms 0 --tracking_uri MS
+
+
+
+
 

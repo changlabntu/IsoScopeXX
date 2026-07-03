@@ -62,5 +62,7 @@ def get_args():
     parser.add_argument('--port', type=str, default='dummy')
     parser.add_argument('--host', type=str, default='dummy')
     parser.add_argument('--tracking_uri', type=str, default=None,
-                        help='MLflow tracking URI (http:// or sqlite:///). Overrides env config.')
+                        help='MLflow tracking: an http://URL for a server, or a bare NAME for a '
+                             'local store at $LOGS/NAME.db + $LOGS/NAME/ (default name: mlflow). '
+                             'Overrides env config.')
     return parser

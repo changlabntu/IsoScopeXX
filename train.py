@@ -127,7 +127,9 @@ if __name__ == '__main__':
                 pass
         print('Preloading time: ' + str(time.time() - tini))
 
-    # Resolve MLflow tracking URI: CLI > env config > local SQLite
+    # Resolve MLflow tracking: an http:// server (CLI/env) OR a local bare NAME.
+    # In local mode --tracking_uri is just a NAME -> $LOGS/NAME.db + $LOGS/NAME/
+    # (defaults to 'mlflow' when unset). A raw sqlite:/// path is NOT accepted anymore.
     http_uri = args.tracking_uri or configs.get('TRACKING_URI')
     artifact_location = None  # server governs artifacts; only set for local SQLite
 
@@ -141,16 +143,15 @@ if __name__ == '__main__':
                 f"MLflow server {http_uri} unreachable. "
                 "Start the server or remove TRACKING_URI from cfg/env.json to use local SQLite."
             )
-    elif http_uri:
-        tracking_uri = http_uri
-        print(f"MLflow: using URI at {tracking_uri}")
     else:
         os.makedirs(logs_root, exist_ok=True)
-        local_db = os.path.join(logs_root, 'mlflow.db')
+        name = args.tracking_uri or 'mlflow'
+        local_db = os.path.join(logs_root, f'{name}.db')
+        artifact_dir = os.path.join(logs_root, name)
         tracking_uri = f"sqlite:///{local_db}"
-        artifact_location = f"file:{os.path.join(logs_root, 'mlartifacts')}"
+        artifact_location = f"file:{artifact_dir}"
         print(f"MLflow: using local SQLite at {local_db}")
-        print(f"MLflow: artifacts under {os.path.join(logs_root, 'mlartifacts')}")
+        print(f"MLflow: artifacts under {artifact_dir}")
 
     tb_logger = TensorBoardLogger(
         save_dir=log_base,
