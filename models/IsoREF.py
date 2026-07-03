@@ -372,4 +372,4 @@ class GAN(BaseModel):
 
 
 # USAGE
-# train.py --jsn womac4X --prj IsoREF/3dLb10mlpNCE10 --models IsoREF --env runpod --n_epochs 801 --gdim 3d_3d --nocyc --use_mlp --epoch_save 100 --lbNCE 10 --lamb 10
+# train.py --jsn aisr --prj IsoREF/3dLb10mlpNCE10 --models IsoREF --env runpod --n_epochs 801 --gdim 3d_3d --nocyc --use_mlp --epoch_save 100 --lbNCE 10 --lamb 10

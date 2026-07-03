@@ -204,7 +204,7 @@ if __name__ == '__main__':
     load_dotenv('cfg/.t09')
 
     parser = argparse.ArgumentParser(description='Visualize paired image dataset')
-    parser.add_argument('--dataset', type=str, default='womac4', help='Dataset to use (womac4, dess0, brain)')
+    parser.add_argument('--dataset', type=str, default='brain', help='Dataset to use (dess0, brain)')
     parser.add_argument('--direction', type=str, default=None, help='Override dataset direction')
     parser.add_argument('--rotate', action='store_true', help='Enable rotation augmentation')
     parser.add_argument('--idx', type=int, default=2, help='Index to visualize')
@@ -216,17 +216,6 @@ if __name__ == '__main__':
 
     # Predefined dataset configurations
     dataset_configs = {
-        'womac4': {
-            'root': '/media/ExtHDD01/Dataset/paired_images/womac4/train/',
-            'direction': 'a3d',
-            'precrop': 380,
-            'cropsize': 384,
-            'resize': 384,
-            'nm': '11',
-            'rotate': True,
-            'rgb': False,
-            'threshold': 0
-        },
         'dess0': {
             'root': '/media/ExtHDD01/Dataset/paired_images/dess0/',
             'direction': 'ori_ori',

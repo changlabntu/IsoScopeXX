@@ -380,7 +380,7 @@ if __name__ == '__main__':
     import argparse
     from utils.data_utils import read_json_to_args
 
-    args = read_json_to_args('/media/ExtHDD01/logs/womac4/vae/0/0.json')
+    args = read_json_to_args('/media/ExtHDD01/logs/vae/0/0.json')
     args.embed_dim = 4
     args.ldmyaml = 'ldmaex2'
     args.tc = False
