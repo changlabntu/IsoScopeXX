@@ -30,8 +30,8 @@ CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py \
 Monitoring (see `docs/paths.md` for exact path assembly):
 ```bash
 tensorboard --logdir $LOGS/{dataset}/{prj}/logs/TensorBoardLogger
-mlflow server --backend-store-uri sqlite:///$LOGS/mlflow/mlflow.db \
-  --artifacts-destination $LOGS/mlflow/mlartifacts --host 0.0.0.0 --port 5002
+mlflow server --backend-store-uri sqlite:///$LOGS/mlflow.db \
+  --artifacts-destination $LOGS/mlartifacts --host 0.0.0.0 --port 5002
 ```
 
 ## Configuration layering (read before changing any default)
@@ -44,7 +44,7 @@ A run's effective config is assembled in `train.py`'s `__main__` in a specific o
 4. CLI flags override everything from steps 1–3 (`parser.parse_args(namespace=json_args)`).
 5. `ldm/{--ldmyaml}.yaml` (e.g. `vqgan.yaml`) defines the **encoder/decoder/quantizer/loss network architecture** (`ddconfig`, `embed_dim`, `n_embed`, `lossconfig`), loaded inside the model's `__init__`.
 
-So model **hyperparameters** live in `cfg/*.yaml`, but the **autoencoder network shape** lives in `ldm/*.yaml`. MLflow tracking URI priority: CLI `--tracking_uri` > `env.json` `TRACKING_URI` > local SQLite at `$LOGS/mlflow/mlflow.db`. An `http://` URI must pass a `/health` check or training aborts.
+So model **hyperparameters** live in `cfg/*.yaml`, but the **autoencoder network shape** lives in `ldm/*.yaml`. MLflow tracking URI priority: CLI `--tracking_uri` > `env.json` `TRACKING_URI` > local SQLite at `$LOGS/mlflow.db`. An `http://` URI must pass a `/health` check or training aborts.
 
 Each run snapshots `config.json`, the active `cfg/*.yaml`, and the model's `.py` source into the timestamped checkpoint dir.
 

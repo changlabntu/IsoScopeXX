@@ -344,6 +344,15 @@ class BaseModel(pl.LightningModule):
             for v in getattr(self, 'aux_views', []):
                 v = nn.functional.interpolate(v, size=self.XupX.shape[2:], mode='trilinear')
                 views.append(v.detach().clone())
+            # Coarse multi-scale outputs (e.g. vqcleanM0aMS's 1/2 and 1/4 heads). Upsample
+            # to the full-res grid with 'trilinear' so the panels concatenate cleanly and
+            # render as smooth lower-res copies of the full-res output. ('nearest' was tried
+            # to make the resolution difference obvious, but it blows each native voxel into
+            # a hard block that reads as a checkerboard artifact.) Guarded — models without
+            # gif_scales are unaffected and keep the original two-panel layout.
+            for v in getattr(self, 'gif_scales', []):
+                v = nn.functional.interpolate(v, size=self.XupX.shape[2:], mode='trilinear')
+                views.append(v.detach().clone())
             self.val_views = views
 
         def to_rgb(t):

@@ -128,8 +128,8 @@ if __name__ == '__main__':
         print('Preloading time: ' + str(time.time() - tini))
 
     # Resolve MLflow tracking URI: CLI > env config > local SQLite
-    mlflow_dir = os.path.join(logs_root, 'mlflow')
     http_uri = args.tracking_uri or configs.get('TRACKING_URI')
+    artifact_location = None  # server governs artifacts; only set for local SQLite
 
     if http_uri and http_uri.startswith("http"):
         try:
@@ -145,10 +145,12 @@ if __name__ == '__main__':
         tracking_uri = http_uri
         print(f"MLflow: using URI at {tracking_uri}")
     else:
-        os.makedirs(mlflow_dir, exist_ok=True)
-        local_db = os.path.join(mlflow_dir, 'mlflow.db')
+        os.makedirs(logs_root, exist_ok=True)
+        local_db = os.path.join(logs_root, 'mlflow.db')
         tracking_uri = f"sqlite:///{local_db}"
+        artifact_location = f"file:{os.path.join(logs_root, 'mlartifacts')}"
         print(f"MLflow: using local SQLite at {local_db}")
+        print(f"MLflow: artifacts under {os.path.join(logs_root, 'mlartifacts')}")
 
     tb_logger = TensorBoardLogger(
         save_dir=log_base,
@@ -159,6 +161,7 @@ if __name__ == '__main__':
         experiment_name=args.dataset,
         run_name=run_timestamp,
         tracking_uri=tracking_uri,
+        artifact_location=artifact_location,
         tags={
             'env': args.env,
             'yaml_config': args.yaml,
