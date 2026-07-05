@@ -7,6 +7,7 @@ import yaml
 from networks.EncoderDecoder.edclean import Generator as EDCleanGenerator
 from networks.EncoderDecoder.ed023e import Generator as ED023eGenerator
 from networks.EncoderDecoder.ed023eMS import Generator as ED023eMSGenerator
+from networks.EncoderDecoder.ed023eMSfpn import Generator as ED023eMSfpnGenerator
 from networks.dsmc import Generator as DSMCGenerator
 from networks.networks import (
     ResnetGenerator, UnetGenerator, UnetGeneratorA,
@@ -136,6 +137,7 @@ network_registry = NetworkRegistry()
 network_registry.register_generator('edclean', EDCleanGenerator)
 network_registry.register_generator('ed023e', ED023eGenerator)
 network_registry.register_generator('ed023ems', ED023eMSGenerator)
+network_registry.register_generator('ed023emsfpn', ED023eMSfpnGenerator)
 network_registry.register_generator('resnet', ResnetGenerator)
 network_registry.register_generator('unet', UnetGenerator)
 network_registry.register_generator('uneta', UnetGeneratorA)
