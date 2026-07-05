@@ -1,7 +1,9 @@
 from typing import Dict, List, Optional, Union, Any
 
 import os
+import struct
 import time
+from io import BytesIO
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -172,6 +174,13 @@ class BaseModel(pl.LightningModule):
     def _save_3d_as_gif(arr, path, duration=100):
         """Create an animated GIF from Z slices of a 3D array.
 
+        The file is assembled by hand from per-frame single-image GIF saves:
+        every frame is complete and opaque, indexed against one shared
+        256-gray global palette. Pillow's multi-frame writer (save_all) is
+        avoided because it stores pixels unchanged since the previous frame
+        as transparent "reuse previous" deltas, which spec-naive readers
+        (ImageJ) render as black speckle on every frame after the first.
+
         Args:
             arr: 3D numpy array with shape (Z, H, W).
             path: Output file path for the GIF.
@@ -188,13 +197,59 @@ class BaseModel(pl.LightningModule):
             arr = np.zeros_like(arr)
         arr_uint8 = (arr * 255).astype(np.uint8)
 
-        frames = [Image.fromarray(arr_uint8[z]) for z in range(arr_uint8.shape[0])]
+        n_frames = arr_uint8.shape[0] // 2
+        if n_frames == 0:
+            return
+        h, w = arr_uint8.shape[1:]
+        gray_ramp = bytes(v for g in range(256) for v in (g, g, g))
 
-        if frames:
+        def frame_image_data(slice_uint8):
+            # Single-frame saves are never delta-encoded; splice out the
+            # image descriptor + LZW data and re-verify the palette so the
+            # spliced indices stay valid against the shared global ramp.
+            frame = Image.frombytes('P', (w, h), slice_uint8.tobytes())
+            frame.putpalette(gray_ramp)
+            buf = BytesIO()
+            frame.save(buf, format='GIF', optimize=False)
+            data = buf.getvalue()
+            flags = data[10]
+            pal_len = 3 * (2 << (flags & 7)) if flags & 0x80 else 0
+            if data[13:13 + pal_len] != gray_ramp:
+                raise ValueError('Pillow rewrote the palette; frame indices would be remapped')
+            pos = 13 + pal_len
+            while data[pos] == 0x21:  # skip extension blocks
+                pos += 2
+                while data[pos] != 0:
+                    pos += 1 + data[pos]
+                pos += 1
+            if data[pos] != 0x2C or data[pos + 9] & 0x80:
+                raise ValueError('unexpected single-frame GIF layout')
+            end = pos + 10 + 1  # image descriptor + LZW minimum code size
+            while data[end] != 0:
+                end += 1 + data[end]
+            return data[pos:end + 1]
+
+        delay_cs = max(1, duration // 10)
+        gce = struct.pack('<BBBBHBB', 0x21, 0xF9, 4, 0, delay_cs, 0, 0)
+        try:
+            payload = [frame_image_data(arr_uint8[z]) for z in range(n_frames)]
+        except ValueError as e:
+            print(f"WARNING: manual GIF assembly failed ({e}) — falling back to Pillow save_all")
+            frames = [Image.fromarray(arr_uint8[z]) for z in range(n_frames)]
             frames[0].save(
                 path, save_all=True, append_images=frames[1:],
                 duration=duration, loop=0
             )
+            return
+        with open(path, 'wb') as f:
+            f.write(b'GIF89a')
+            f.write(struct.pack('<HHBBB', w, h, 0xF7, 0, 0))
+            f.write(gray_ramp)
+            f.write(b'\x21\xFF\x0BNETSCAPE2.0\x03\x01\x00\x00\x00')  # loop forever
+            for p in payload:
+                f.write(gce)
+                f.write(p)
+            f.write(b'\x3B')
 
     def _log_gif_artifact(self, arr, prefix):
         """Create a GIF from a 3D array and log to MLflow artifacts.
