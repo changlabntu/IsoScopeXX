@@ -18,7 +18,7 @@ import tifffile as tiff
 
 
 # vqcleanM0aMSskip: vqcleanM0aMS + zero-init lateral skips of the fine VQ scales
-# (MS_refine directions 1+2). Requires --netG ed023emsfpn and num_scales >= 3; run with
+# (doc/experiments_MS.md). Requires --netG ed023emsfpn and num_scales >= 3; run with
 # --pyr_detach --adv_ms 0.5.
 #
 # Unlike vqcleanM0aMSfpn (restricted trunk, which measurably hurt KID/LPIPS), the trunk

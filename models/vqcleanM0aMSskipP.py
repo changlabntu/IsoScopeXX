@@ -18,7 +18,7 @@ import tifffile as tiff
 
 
 # vqcleanM0aMSskipP: vqcleanM0aMSskipE + projection forward-model variants for the L1
-# self-consistency loss (MS_refine2 projection probe). Requires --netG ed023emsfpn and
+# self-consistency loss (projection probe, doc/experiments_MS.md). Requires --netG ed023emsfpn and
 # num_scales >= 3; run with --pyr_detach --adv_ms 0.5.
 #
 # Inherited from vqcleanM0aMSskipE: full-sum trunk + zero-init lateral skips (step-0 ==

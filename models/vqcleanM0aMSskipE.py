@@ -18,7 +18,7 @@ import tifffile as tiff
 
 
 # vqcleanM0aMSskipE: vqcleanM0aMSskip + EMA-at-eval + real-data coarse supervision
-# (MS_refine2 F1+F2). Requires --netG ed023emsfpn and num_scales >= 3; run with
+# (doc/experiments_MS.md). Requires --netG ed023emsfpn and num_scales >= 3; run with
 # --pyr_detach --adv_ms 0.5.
 #
 # Inherited from vqcleanM0aMSskip: full-sum trunk (every code gets full decoder depth) +
