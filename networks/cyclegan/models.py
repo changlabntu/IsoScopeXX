@@ -92,19 +92,54 @@ class GeneratorResNet(nn.Module):
 ##############################
 
 
+class BlurPool2d(nn.Module):
+    """Anti-aliased downsampling (Zhang, ICML 2019): fixed binomial low-pass, then
+    stride-2 subsample. Prevents near-Nyquist content (e.g. the period-2/4 alias
+    lattice of ConvTranspose generators) from folding into a phase-dependent
+    response the discriminator cannot learn from. No learnable parameters; the
+    kernel buffer is non-persistent (kept out of checkpoints). Note: inserting
+    blur modules shifts nn.Sequential indices, so a blur D's state_dict KEYS
+    differ from a plain patch D's even though every parameter tensor keeps the
+    same shape and order — warm-starting from a plain checkpoint needs a key
+    remap, not strict loading."""
+
+    def __init__(self, channels, stride=2):
+        super().__init__()
+        self.stride = stride
+        k = torch.tensor([1., 2., 1.])
+        k = (k[:, None] * k[None, :]) / 16.0  # 3x3 binomial, sums to 1
+        self.register_buffer('kernel', k.expand(channels, 1, 3, 3).clone(),
+                             persistent=False)
+
+    def forward(self, x):
+        return F.conv2d(x, self.kernel, stride=self.stride, padding=1,
+                        groups=x.shape[1])
+
+
 class Discriminator(nn.Module):
-    def __init__(self, input_shape, patch, ndf=64):
+    def __init__(self, input_shape, patch, ndf=64, blur=False):
         super(Discriminator, self).__init__()
         assert patch in [4, 8, 16]
-        print('Use ' + str(patch) + ' patch discriminator')
+        print('Use ' + str(patch) + ' patch discriminator' + (' (blurpool)' if blur else ''))
         channels, height, width = input_shape
 
         def discriminator_block(in_filters, out_filters, normalize=True):
-            """Returns downsampling layers of each discriminator block"""
-            layers = [nn.Conv2d(in_filters, out_filters, 4, stride=2, padding=1)]
+            """Returns downsampling layers of each discriminator block.
+
+            blur=False: Conv(k4,s2) -> [InstanceNorm] -> LeakyReLU (original).
+            blur=True (anti-aliased): Conv(k4,s1) -> [InstanceNorm] -> LeakyReLU
+            -> BlurPool2d(s2) — blur goes last, after the nonlinearity, per Zhang;
+            blurring before the activation would be defeated by the nonlinearity
+            regenerating high frequencies. Output sizes match the s2 original
+            (H -> H-1 -> H//2 for even H); conv weight shapes are identical
+            (Sequential indices shift — see BlurPool2d docstring)."""
+            stride = 1 if blur else 2
+            layers = [nn.Conv2d(in_filters, out_filters, 4, stride=stride, padding=1)]
             if normalize:
                 layers.append(nn.InstanceNorm2d(out_filters))
             layers.append(nn.LeakyReLU(0.2, inplace=True))
+            if blur:
+                layers.append(BlurPool2d(out_filters))
             return layers
 
         if 1:

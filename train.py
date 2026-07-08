@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from utils.make_config import load_json, save_json
 import json
 import requests
+import mlflow
 from mlflow.system_metrics.system_metrics_monitor import SystemMetricsMonitor
 import yaml
 import pytorch_lightning as pl
@@ -177,7 +178,9 @@ if __name__ == '__main__':
     # PL's MLFlowLogger bypasses mlflow.start_run(), so SystemMetricsMonitor must be started manually
     monitor = None
     if tracking_uri.startswith("http"):
-        monitor = SystemMetricsMonitor(mlf_logger.run_id, tracking_uri=tracking_uri)
+        # SystemMetricsMonitor has no tracking_uri arg; it reads the global one
+        mlflow.set_tracking_uri(tracking_uri)
+        monitor = SystemMetricsMonitor(mlf_logger.run_id)
         monitor.start()
 
     "Please use `Trainer(accelerator='gpu', devices=-1)` instead."

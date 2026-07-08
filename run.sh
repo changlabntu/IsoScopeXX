@@ -9,10 +9,10 @@
 
 #CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSadv0/Scale4/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --lamb 5 --models vqcleanM0aMSfpn --num_scales 4 --cropsize 192 --cropz 24 --lr 0.0005 --netG ed023emsfpn --adv_ms 0 --tracking_uri thx-MS
 
-# thx MSskip: full-sum trunk + zero-init lateral skips (step-0 == MS baseline) + pyr_detach + coarse GANs (MS_refine 1+2)
+# thx MSskip: full-sum trunk + zero-init lateral skips (step-0 == MS baseline) + pyr_detach + coarse GANs (doc/experiments_MS.md)
 #CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskip/Scale4/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --lamb 5 --models vqcleanM0aMSskip --num_scales 4 --cropsize 192 --cropz 24 --lr 0.002 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --tracking_uri thx-MS
 
-# thx MSskipE: MSskip + EMA-at-eval + real-data coarse L1 (MS_refine2 F1+F2)
+# thx MSskipE: MSskip + EMA-at-eval + real-data coarse L1 (doc/experiments_MS.md)
 # result @141ep: best-in-class val_kid 4.96 (EMA win), but val_lpips_pred plateaued 0.616 vs MSskip 0.578
 #CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipE/Scale4/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --cropsize 192 --cropz 24 --lr 0.002 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri thx-MS
 
@@ -26,7 +26,23 @@
 
 # thx MSskipE-ema999: A1 ablation — skipE with EMA horizon ~6.5 epochs instead of ~65 (only --ema_decay changes).
 # Hypothesis: recovers MSskip's LPIPS (~0.578) while keeping skipE's KID (~5.0) -> first run holding both crowns.
-CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipE/Scale4/ema999 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --cropsize 192 --cropz 24 --lr 0.002 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --ema_decay 0.999 --tracking_uri thx-MS
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipE/Scale4/ema999 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --cropsize 192 --cropz 24 --lr 0.002 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --ema_decay 0.999 --tracking_uri thx-MS
+
+# thx MSskipE: MSskip + EMA-at-eval + real-data coarse L1 (doc/experiments_MS.md)
+# result @141ep: best-in-class val_kid 4.96 (EMA win), but val_lpips_pred plateaued 0.616 vs MSskip 0.578
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipEcoarse0/Scale4/max5skip4coarse0 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ #thx-MS
+
+
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipE/Scale4/max5skip4coarse0 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube/ --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri fuse-MS
+
+# fuse MSskipU: skipE + Z3 resize-conv trunk (--netG ed023emsfpnu) — removes the ConvTranspose alias-lattice
+# SOURCE (diagonal beading, doc/research_artifact_suggestions.md). Fresh trunk weights: no step-0 equivalence,
+# compare vs the fuse skipE line above at matched optimizer steps. Verdict: val_lat_* (expect p2diag/p4diag -> ~1) + LPIPS/KID.
+CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipU/Scale4/max5skip4coarse0 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube/ --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpnu --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri fuse-MS
+
+# fuse MSskipUB: MSskipU + BlurPool patch D (--netD patchblur_16) — also removes the D's stride-2 blindness so
+# G cannot drift back to grid-anchored solutions. UB-vs-U delta isolates BlurPool's effect (lattice + KID/LPIPS).
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/Scale4/max5skip4coarse0 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube/ --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri fuse-MS
 
 
 

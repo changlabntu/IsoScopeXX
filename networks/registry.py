@@ -18,6 +18,14 @@ from networks.cyclegan.models import (
     Discriminator as CycleGANDiscriminator
 )
 
+# 'ed*u' resize-conv variants: same classes as their non-u names, but every 3D up
+# stage uses Upsample((2,2,2)) + Conv3d(k3,s1,p1) instead of ConvTranspose3d(k4,s2)
+# (anti-checkerboard, Z3 — doc/research_artifact_suggestions.md). Explicit set, not
+# suffix parsing, so no existing name can match by accident. NOTE the value passed
+# must be the tuple (2,2,2), never True: use_upsample doubles as nn.Upsample's
+# scale_factor, and bool True would coerce to scale_factor=1.0 (silent no-op).
+UPSAMPLE_GENERATORS = {'ed023emsu', 'ed023emsfpnu'}
+
 
 class NetworkRegistry:
     """Registry for network architectures."""
@@ -43,7 +51,8 @@ class NetworkRegistry:
                 nf=kwargs.get('ngf'),
                 norm_type=kwargs.get('norm'),
                 final=kwargs.get('final'),
-                mc=kwargs.get('mc', False)
+                mc=kwargs.get('mc', False),
+                use_upsample=(2, 2, 2) if name in UPSAMPLE_GENERATORS else False
             )
 
         elif name.startswith('ldm'):  # LDM
@@ -103,7 +112,18 @@ class NetworkRegistry:
     
     def get_discriminator(self, name: str, **kwargs: Any) -> nn.Module:
         """Get a discriminator instance by name."""
-        if name.startswith('patch'):
+        # Must be checked BEFORE the 'patch' prefix below, which would otherwise
+        # capture 'patchblur_16' and silently build a plain (non-blur) patch D.
+        if name.startswith('patchblur'):  # anti-aliased patch D (BlurPool, Zhang 2019)
+            patch_size = int(name.split('_')[-1])
+            return self._discriminators['cyclegan'](
+                input_shape=(kwargs.get('input_nc', 1), 256, 256),
+                patch=patch_size,
+                ndf=kwargs.get('ndf', 64),
+                blur=True
+            )
+
+        elif name.startswith('patch'):
             patch_size = int(name.split('_')[-1])
             return self._discriminators['cyclegan'](
                 input_shape=(kwargs.get('input_nc', 1), 256, 256),
@@ -138,6 +158,10 @@ network_registry.register_generator('edclean', EDCleanGenerator)
 network_registry.register_generator('ed023e', ED023eGenerator)
 network_registry.register_generator('ed023ems', ED023eMSGenerator)
 network_registry.register_generator('ed023emsfpn', ED023eMSfpnGenerator)
+# Resize-conv (anti-checkerboard) variants — same classes, switched by
+# UPSAMPLE_GENERATORS membership in get_generator.
+network_registry.register_generator('ed023emsu', ED023eMSGenerator)
+network_registry.register_generator('ed023emsfpnu', ED023eMSfpnGenerator)
 network_registry.register_generator('resnet', ResnetGenerator)
 network_registry.register_generator('unet', UnetGenerator)
 network_registry.register_generator('uneta', UnetGeneratorA)

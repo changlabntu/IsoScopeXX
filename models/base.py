@@ -17,6 +17,7 @@ from torchmetrics.image.kid import KernelInceptionDistance
 from networks.networks import get_scheduler
 from networks.loss import GANLoss
 from networks.registry import network_registry
+from utils.metrics_spectral import mean_power_spectrum, lattice_peak_ratios
 from utils.data_utils import *
 import tifffile as tiff
 
@@ -425,6 +426,32 @@ class BaseModel(pl.LightningModule):
             lpips_tgt  = self.lpips_fn(to_rgb(xy_tgt), to_rgb(yz_tgt)).mean()
             lpips_pred = self.lpips_fn(to_rgb(xy_tgt), to_rgb(yz_pred)).mean()
 
+            # Lattice alias-peak metric: accumulate the mean power spectrum of both
+            # lateral plane orientations of the prediction across val batches
+            # (Welch averaging — stabler than averaging per-batch ratios); the
+            # peak/background ratios are computed once in validation_epoch_end.
+            # Keyed by spectrum shape so non-cubic volumes never mix sizes.
+            # Init at batch_idx == 0 (NOT in on_validation_start — model subclasses
+            # override that hook without calling super()).
+            if batch_idx == 0:
+                self._val_spec_acc = {}
+            xz_pred = self.XupX.permute(0, 3, 1, 2, 4).reshape(B * Y, C, X, Z)[::16]
+            for planes in (yz_pred, xz_pred):
+                spec = mean_power_spectrum(planes.float())
+                k = tuple(spec.shape)
+                if k in self._val_spec_acc:
+                    self._val_spec_acc[k][0] += spec
+                    self._val_spec_acc[k][1] += 1
+                else:
+                    self._val_spec_acc[k] = [spec, 1]
+
+        # Accumulate for the end-of-epoch console printout (this rank's shard only —
+        # the logged metrics below are the properly rank-synced values).
+        if batch_idx == 0:
+            self._val_lpips_acc = {'tgt': [], 'pred': []}
+        self._val_lpips_acc['tgt'].append(float(lpips_tgt))
+        self._val_lpips_acc['pred'].append(float(lpips_pred))
+
         # on_epoch=True: PL averages across all batches and ranks automatically
         self.log('val_lpips_tgt', lpips_tgt, on_step=False, on_epoch=True, logger=True, sync_dist=True)
         self.log('val_lpips_pred', lpips_pred, on_step=False, on_epoch=True, logger=True, sync_dist=True)
@@ -471,6 +498,32 @@ class BaseModel(pl.LightningModule):
         kid_mean, kid_std = self.kid.compute()
         self.log('val_kid', kid_mean, logger=True, sync_dist=True)
         self.kid.reset()
+
+        # Lattice alias-peak ratios from the epoch-accumulated spectra (see
+        # utils/metrics_spectral.py; ~1 = clean, the ConvTranspose lattice showed
+        # p2diag up to ~90x). sync_dist averages the per-rank ratios — assumes
+        # every rank saw >= 1 val batch (DistributedSampler pads; same assumption
+        # val_kid makes above).
+        spec_acc = getattr(self, '_val_spec_acc', None)
+        lat = {}
+        if spec_acc:
+            for spec_sum, n in spec_acc.values():
+                for k, v in lattice_peak_ratios(spec_sum / n).items():
+                    lat.setdefault(k, []).append(v)
+            for k in lat:
+                lat[k] = torch.stack(lat[k]).mean()
+                self.log('val_lat_' + k, lat[k], logger=True, sync_dist=True)
+            self._val_spec_acc = {}
+
+        # Console summary per epoch (rank 0's shard; MLflow/TB hold the synced values)
+        acc = getattr(self, '_val_lpips_acc', None)
+        if self.trainer.is_global_zero and acc and acc['pred']:
+            msg = 'Epoch {} val | lpips_pred {:.4f} | lpips_tgt {:.4f} | kid {:.3f}'.format(
+                self.epoch, np.mean(acc['pred']), np.mean(acc['tgt']), float(kid_mean))
+            if lat:
+                msg += ' | lat ' + ' '.join('{} {:.1f}'.format(k, float(v))
+                                            for k, v in lat.items())
+            print(msg)
 
         # Log a GIF from validation's first batch (stored in validation_step), every 5 epochs.
         # Panels are laid out left-to-right as data0 (input) | enhanced | data1 | data2 | ...
