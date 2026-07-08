@@ -38,15 +38,23 @@
 # fuse MSskipU: skipE + Z3 resize-conv trunk (--netG ed023emsfpnu) — removes the ConvTranspose alias-lattice
 # SOURCE (diagonal beading, doc/research_artifact_suggestions.md). Fresh trunk weights: no step-0 equivalence,
 # compare vs the fuse skipE line above at matched optimizer steps. Verdict: val_lat_* (expect p2diag/p4diag -> ~1) + LPIPS/KID.
-CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipU/Scale4/max5skip4coarse0 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube/ --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpnu --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri fuse-MS
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipU/Scale4/max5skip4coarse0 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube/ --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpnu --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri fuse-MS
 
-# fuse MSskipUB: MSskipU + BlurPool patch D (--netD patchblur_16) — also removes the D's stride-2 blindness so
-# G cannot drift back to grid-anchored solutions. UB-vs-U delta isolates BlurPool's effect (lattice + KID/LPIPS).
-#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/Scale4/max5skip4coarse0 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube/ --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri fuse-MS
+# thx MSskipUB: the full anti-alias stack on thx10 — skipE + Z3 resize-conv trunk (--netG ed023emsfpnu, removes
+# the ConvTranspose lattice SOURCE; fuse verdict: p2diag 94x -> 1.3) + BlurPool patch D (--netD patchblur_16,
+# gives net_d/net_d_128/net_d_64 sight above their stride-2 Nyquist so they can DEMAND the high frequency
+# resize-conv under-produces — the fuse-U KID regression, 5.4 vs 3.1). Deliberate knob choices:
+#   --lamb_coarse 0  : drops the coarse-L1 smoothing pressure (sharpness-aligned; matches fuse U/UB config)
+#   ema_decay 0.9999 : default kept for comparability with the thx skipE family (dual-eval still the follow-up)
+#   l1how max / lamb 5 / skipl1 4 : from cfg/aisr.yaml — held constant across the whole lineage; band retest
+#   is gated on this run's verdict, not folded in.
+# Compare vs thx skipE/skipEcoarse0 at matched optimizer steps (the clean UB-vs-U BlurPool isolation lives on
+# fuse). Success = val_lat_* stays ~1 AND val_kid recovers to <=skipE (4.97) AND val_lpips_pred <= MSskip (0.577).
+
+CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/Scale4/max5skip4coarse0 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri thx-MS
 
 
-
-
+# remote tracking: --tracking_uri https://mlflow.ntugarylab.dpdns.org/
 
 
 

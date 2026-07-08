@@ -99,11 +99,74 @@ def conv3d_bn_block(in_channels, out_channels, kernel=3, momentum=0.01, activati
     )
 
 
+class NearestUpsample3d(nn.Module):
+    """nn.Upsample(nearest) that chunks along channels when the output would exceed
+    the int32 element limit of the CUDA upsample_nearest3d kernel — hit on full-volume
+    validation (e.g. 2*nf ch x 384^3 at up1). Parameter-free, so state_dict-compatible
+    with nn.Upsample."""
+    INT32_MAX = 2 ** 31 - 1
+
+    def __init__(self, scale_factor):
+        super().__init__()
+        self.scale_factor = scale_factor
+
+    def forward(self, x):
+        s = self.scale_factor
+        sy, sx, sz = s if isinstance(s, (tuple, list)) else (s, s, s)
+        out_shape = (x.shape[0], x.shape[1],
+                     int(x.shape[2] * sy), int(x.shape[3] * sx), int(x.shape[4] * sz))
+        out_numel = out_shape[0] * out_shape[1] * out_shape[2] * out_shape[3] * out_shape[4]
+        if out_numel <= self.INT32_MAX:
+            return nn.functional.interpolate(x, scale_factor=self.scale_factor)
+        per_ch = out_numel // out_shape[1]
+        step = max(1, self.INT32_MAX // per_ch)
+        out = x.new_empty(out_shape)
+        for c0 in range(0, out_shape[1], step):
+            out[:, c0:c0 + step] = nn.functional.interpolate(
+                x[:, c0:c0 + step], scale_factor=self.scale_factor)
+        return out
+
+
+class SafeUpConv3d(nn.Sequential):
+    """Nearest-Upsample -> Conv3d(k3, p1) pair that switches to exact Z-slab chunking
+    (1-voxel conv halo) when the upsampled tensor would exceed cuDNN's int32 element
+    limit — beyond it F.conv3d falls back to an im2col path needing a ~360 GiB
+    workspace (hit on full-volume validation, e.g. 2*nf ch x 384^3 at up1).
+    Subclasses nn.Sequential so state_dict keys match the plain (Upsample, Conv3d)
+    pair. Chunking is only ever entered at inference-scale inputs."""
+    SAFE_NUMEL = 2 ** 30  # half the int32 kernel limit, margin for cuDNN workspaces
+
+    def forward(self, x):
+        up, conv = self[0], self[1]
+        s = up.scale_factor
+        sy, sx, sz = s if isinstance(s, (tuple, list)) else (s, s, s)
+        if x.numel() * sy * sx * sz <= self.SAFE_NUMEL:
+            return conv(up(x))
+        zin = x.shape[4]
+        # elements of one upsampled z-plane -> input-z rows per chunk
+        plane = x.shape[0] * x.shape[1] * int(x.shape[2] * sy) * int(x.shape[3] * sx)
+        step = max(1, int(self.SAFE_NUMEL // plane - 2) // int(sz))
+        outs = []
+        for a in range(0, zin, step):
+            b = min(a + step, zin)
+            a2, b2 = a - (1 if a > 0 else 0), b + (1 if b < zin else 0)  # halo rows
+            slab = nn.functional.interpolate(x[..., a2:b2], scale_factor=(sy, sx, sz))
+            # crop to the needed upsampled range [a*sz - halo, b*sz + halo)
+            u0 = a * int(sz) - (1 if a > 0 else 0)
+            u1 = b * int(sz) + (1 if b < zin else 0)
+            slab = slab[..., u0 - a2 * int(sz):u1 - a2 * int(sz)]
+            # zero-pad Z only at the global volume ends; interior edges use halo rows
+            slab = nn.functional.pad(slab, (1 if a == 0 else 0, 1 if b == zin else 0))
+            outs.append(nn.functional.conv3d(slab, conv.weight, conv.bias,
+                                             stride=1, padding=(1, 1, 0)))
+        return torch.cat(outs, dim=4)
+
+
 def deconv3d_bn_block(in_channels, out_channels, use_upsample=(2, 2, 2), kernel=4, stride=2, padding=1, momentum=0.01,
                       activation=ACTIVATION, norm='batch'):
     if use_upsample:
-        up = nn.Sequential(
-            nn.Upsample(scale_factor=use_upsample),
+        up = SafeUpConv3d(
+            NearestUpsample3d(scale_factor=use_upsample),
             nn.Conv3d(in_channels, out_channels, 3, stride=1, padding=1)
         )
     else:
