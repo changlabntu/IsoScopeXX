@@ -65,7 +65,7 @@
 #   val_spec_recon_mid -> vqclean's 0.84   (MS@100: 0.46, MSskip: 0.37, skipE: 0.25)
 #   val_spec_xy_mid    -> vqclean's 0.39   (MS@100: 0.38, skipE: 0.20) — trunk renders < half of
 #   what the latent carries (0.84), so there is headroom beyond parity.
-#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanMH/Scale1/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanMH --num_scales 1 --lr 0.0002 --netG ed023emsdet --netD patch_16 --tracking_uri thx-MS
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanMH/Scale1/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanMH --num_scales 1 --lr 0.0002 --netG ed023emsdet --netD patch_16 --tracking_uri thx-MS-384
 
 # thx vqclean benchmark: the EXACT vqclean model on the same data/geometry/recipe as the MH runs —
 # the control that separates "vqcleanMH == vqclean + heads" from any residual difference (extra
@@ -75,7 +75,7 @@
 # val_spec_recon_mid 1.07@ep100 (~3.4k steps) / 0.94@ep200 / 0.84@ep600 — this rerun re-pins those
 # on roiD at ~77 steps/epoch. NOTE: models/vqclean.py got the Xup-size fix (F.interpolate to XupX
 # shape, train-path identical) so full-depth roiD validation works.
-CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqclean/roiD192/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqclean --lr 0.0002 --netG ed023e --netD patch_16 --tracking_uri thx-MS
+CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqclean/roiD192/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqclean --lr 0.0002 --netG ed023e --netD patch_16 --tracking_uri thx-MS-384
 
 
 # remote tracking: --tracking_uri https://mlflow.ntugarylab.dpdns.org/

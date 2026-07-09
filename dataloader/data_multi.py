@@ -88,6 +88,11 @@ class PairedImageDataset(data.Dataset):
 
         # Configure image processing parameters
         self.config.resize = self._get_resize_value()
+        # precrop=0 -> use the patch's own width (mirrors resize=0). Without this the
+        # argparse default fed A.CenterCrop a fixed size that silently center-cropped +
+        # upsampled any patch wider than it (e.g. roiD 384 under the old default 256 ->
+        # kept ~19% of native high-freq energy). Resolve it here like resize.
+        self.config.precrop = self._get_precrop_value()
         self.config.crop_size = self.config.cropsize or self.resize
         self.transforms = transforms_fn or self._get_default_transforms()
         self.labels = labels or [0] * len(self.image_names)

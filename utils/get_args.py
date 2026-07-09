@@ -16,7 +16,7 @@ def get_args():
     parser.add_argument('--dataset', type=str)
     parser.add_argument('--preload', action='store_true')
 
-    parser.add_argument('--precrop', type=int, help='size for precrop', default=256)
+    parser.add_argument('--precrop', type=int, help='size for precrop', default=0)
     parser.add_argument('--resize', type=int, help='size for resizing before cropping, 0 for no resizing')
     parser.add_argument('--cropsize', type=int, help='size for xy cropping, 0 for no crop')
     parser.add_argument('--cropz', type=int, help='size for z cropping, 0 for no crop')
