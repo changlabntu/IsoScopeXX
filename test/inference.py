@@ -9,7 +9,8 @@ Usage:
     python test/inference.py \
         --checkpoint $LOGS/THX10SDM20xw/thx10/vqcleanM0aMSskipP/Scale4/band5 \
         --source /path/to/patches_dir_or_file.tif \
-        --destination test/out/band5
+        --destination /home/gary/workspace/Data/THX10SDM20xw/out/band5
+    # --destination defaults to {DEFAULT_OUT}/{experiment name}
     # --dsp 1 to feed a real anisotropic volume as-is (default: config's dsp,
     #   which mimics training by Z-subsampling an isotropic input)
 """
@@ -24,6 +25,10 @@ from pathlib import Path
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+
+# Default base for all inference outputs (per-run subdir appended when
+# --destination is not given).
+DEFAULT_OUT = '/home/gary/workspace/Data/THX10SDM20xw/out'
 
 import json  # noqa: E402
 import numpy as np  # noqa: E402
@@ -85,7 +90,7 @@ def main():
     parser.add_argument('--epoch', type=int, default=None, help='Epoch to load (default: latest)')
     parser.add_argument('--source', required=True, help='A .tif file or a directory of .tif files')
     parser.add_argument('--destination', default=None,
-                        help='Output dir (default: test/out/{experiment name})')
+                        help=f'Output dir (default: {DEFAULT_OUT}/{{experiment name}})')
     parser.add_argument('--nm', default=None, help="Normalization override (default: config's --nm)")
     parser.add_argument('--norm_stats', default=None,
                         help="norm_stats.json path for nm='11p' (key = tif parent dir name)")
@@ -138,7 +143,7 @@ def main():
     if not files:
         raise FileNotFoundError(f'No .tif files found at {args.source}')
 
-    dest = args.destination or os.path.join(REPO_ROOT, 'test', 'out',
+    dest = args.destination or os.path.join(DEFAULT_OUT,
                                             os.path.basename(args.checkpoint.rstrip('/')))
     os.makedirs(dest, exist_ok=True)
     print(f'{len(files)} file(s) -> {dest}  (nm={nm}, dsp={gan.hparams.dsp})')

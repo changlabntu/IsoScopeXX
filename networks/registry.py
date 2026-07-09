@@ -7,6 +7,7 @@ import yaml
 from networks.EncoderDecoder.edclean import Generator as EDCleanGenerator
 from networks.EncoderDecoder.ed023e import Generator as ED023eGenerator
 from networks.EncoderDecoder.ed023eMS import Generator as ED023eMSGenerator
+from networks.EncoderDecoder.ed023eMSdet import Generator as ED023eMSdetGenerator
 from networks.EncoderDecoder.ed023eMSfpn import Generator as ED023eMSfpnGenerator
 from networks.dsmc import Generator as DSMCGenerator
 from networks.networks import (
@@ -157,6 +158,8 @@ network_registry = NetworkRegistry()
 network_registry.register_generator('edclean', EDCleanGenerator)
 network_registry.register_generator('ed023e', ED023eGenerator)
 network_registry.register_generator('ed023ems', ED023eMSGenerator)
+# Detached coarse-head taps (read-only heads) — models/vqcleanMH.py trunk-purity design.
+network_registry.register_generator('ed023emsdet', ED023eMSdetGenerator)
 network_registry.register_generator('ed023emsfpn', ED023eMSfpnGenerator)
 # Resize-conv (anti-checkerboard) variants — same classes, switched by
 # UPSAMPLE_GENERATORS membership in get_generator.

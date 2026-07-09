@@ -7,7 +7,6 @@ from contextlib import contextmanager
 from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 from ldm.modules.losses.vqperceptual import VQLPIPSWithDiscriminator
 from ldm.modules.diffusionmodules.modelcut import Encoder, Decoder
-from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
 from ldm.util import instantiate_from_config
 import yaml
 import numpy as np
@@ -18,11 +17,23 @@ from pytorch_msssim import ms_ssim
 import tifffile as tiff
 
 
+# vqcleanMH: vqclean texture + multi-scale latent + READ-ONLY multi-head output.
+#
+# Trunk-purity contract: the full-res output (out0) trains under exactly the vqclean
+# recipe — six-way adversarial + max-projection L1 + VQ/AE losses, lr 2e-4, no EMA,
+# no coarse discriminators, no pyramid pressure. The coarse heads (out128/out64) are
+# observers: --netG ed023emsdet detaches their trunk taps, and the distillation
+# targets below are detached too, so gradient from the head loss reaches ONLY the
+# conv7_128/conv7_64 head weights. The trunk's gradients are therefore identical to a
+# head-less vqclean run at every step, by construction (stronger than the MSskip
+# zero-init guarantee, which held at step 0 only). The multi-scale residual VQ is
+# kept (measured ~free on 2D recon sharpness — doc/experiments_MS.md).
+#
+# Run with:  --models vqcleanMH --netG ed023emsdet --num_scales 4 --lr 0.0002
 class GAN(BaseModel):
     def __init__(self, hparams, train_loader, eval_loader, checkpoints):
         BaseModel.__init__(self, hparams, train_loader, eval_loader, checkpoints)
 
-        # VQGAN Model
         print('Reading yaml: ' + self.hparams.ldmyaml)
         with open('ldm/' + self.hparams.ldmyaml + '.yaml', "r") as f:
             config = yaml.load(f, Loader=yaml.Loader)
@@ -31,88 +42,80 @@ class GAN(BaseModel):
         if self.hparams.tc:
             ddconfig['in_channels'] = 2
             ddconfig['out_ch'] = 1
-        self.hparams.netG = self.hparams.netG
-
-        # Bottleneck mode: VQ (default) or VAE (KL)
-        self.use_vae = getattr(hparams, 'vae', False)
-        if self.use_vae:
-            ddconfig['double_z'] = True  # encoder outputs 2*z_channels for mu+logvar
 
         self.hparams.final = 'tanh'
         self.net_g, self.net_d = self.set_networks()
 
-        # VQGAN/VAE components
+        # VQGAN components
         self.encoder = Encoder(**ddconfig)
         self.decoder = Decoder(**ddconfig)
         self.embed_dim = config['model']['params']['embed_dim']
+        self.n_embed = config['model']['params']['n_embed']
 
-        if self.use_vae:
-            # VAE: quant_conv maps 2*z_channels -> 2*embed_dim (mu + logvar)
-            self.quant_conv = nn.Conv2d(2 * ddconfig["z_channels"], 2 * self.embed_dim, 1)
-            self.post_quant_conv = nn.Conv2d(self.embed_dim, ddconfig["z_channels"], 1)
-        else:
-            self.n_embed = config['model']['params']['n_embed']
-            # Vector Quantizer
-            self.quantize = VectorQuantizer(
-                self.n_embed,
-                self.embed_dim,
-                beta=0.25,
+        # Multi-scale VQ — scale_factors go coarse to fine, matching VAR Algorithm 1
+        # e.g. num_scales=4 → scale_factors=[8, 4, 2, 1]
+        self.num_scales = getattr(hparams, 'num_scales', 1)
+        self.scale_factors = [2 ** (self.num_scales - 1 - i) for i in range(self.num_scales)]
+        print('scale_factors: ' + str(self.scale_factors))
+
+        # Per-scale quant_conv: z_channels → embed_dim (applied at downsampled resolution)
+        self.quant_convs = nn.ModuleList([
+            nn.Conv2d(ddconfig["z_channels"], self.embed_dim, 1)
+            for _ in range(self.num_scales)
+        ])
+
+        # Per-scale post_quant_conv: embed_dim → z_channels (VAR ϕk, at full resolution)
+        self.post_quant_convs = nn.ModuleList([
+            nn.Conv2d(self.embed_dim, ddconfig["z_channels"], 1)
+            for _ in range(self.num_scales)
+        ])
+
+        # Quantizers — separate codebook per scale by default; --shared_codebook for one
+        self.shared_codebook = getattr(hparams, 'shared_codebook', False)
+        if self.shared_codebook:
+            shared_q = VectorQuantizer(
+                self.n_embed, self.embed_dim, beta=0.25,
                 remap=getattr(hparams, 'remap', None),
                 sane_index_shape=getattr(hparams, 'sane_index_shape', False)
             )
-            # Quantization convolutions
-            self.quant_conv = nn.Conv2d(ddconfig["z_channels"], self.embed_dim, 1)
-            self.post_quant_conv = nn.Conv2d(self.embed_dim, ddconfig["z_channels"], 1)
+            self.quantizers = nn.ModuleList([shared_q for _ in range(self.num_scales)])
+        else:
+            self.quantizers = nn.ModuleList([
+                VectorQuantizer(
+                    self.n_embed, self.embed_dim, beta=0.25,
+                    remap=getattr(hparams, 'remap', None),
+                    sane_index_shape=getattr(hparams, 'sane_index_shape', False)
+                )
+                for _ in range(self.num_scales)
+            ])
 
         # Initialize loss
         self.loss = instantiate_from_config(config['model']['params']["lossconfig"])
         self.discriminator = self.loss.discriminator
 
-        # EMA support
-        self.use_ema = getattr(hparams, 'use_ema', False)
-        if self.use_ema:
-            try:
-                from taming.modules.util import LitEma
-                self.model_ema = LitEma(self)
-                print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
-            except ImportError:
-                print("LitEma not available, disabling EMA")
-                self.use_ema = False
-
-        # Save model names
         self.netg_names = {
             'encoder': 'encoder',
             'decoder': 'decoder',
-            'quant_conv': 'quant_conv',
-            'post_quant_conv': 'post_quant_conv',
+            'quantizers': 'quantizers',
+            'quant_convs': 'quant_convs',
+            'post_quant_convs': 'post_quant_convs',
             'net_g': 'net_g'
         }
-        if not self.use_vae:
-            self.netg_names['quantize'] = 'quantize'
-        self.netd_names = {'discriminator': 'discriminator', 'net_d': 'net_d'}
+        # vqclean's discriminator set: the AE-internal 2D D + the six-way patch D only.
+        self.netd_names = {
+            'discriminator': 'discriminator',
+            'net_d': 'net_d',
+        }
 
-        # Configure optimizers
         self.configure_optimizers()
 
-        self.upsample = torch.nn.Upsample(size=(hparams.cropsize, hparams.cropsize, hparams.cropsize), mode='trilinear')
+        self.upsample = torch.nn.Upsample(
+            size=(hparams.cropsize, hparams.cropsize, hparams.cropsize), mode='trilinear'
+        )
         self.uprate = (hparams.cropsize // hparams.cropz) * hparams.dsp / hparams.usp
         self.uprate = int(self.uprate)
         print('uprate: ' + str(self.uprate))
-
-    @contextmanager
-    def ema_scope(self, context=None):
-        if self.use_ema:
-            self.model_ema.store(self.parameters())
-            self.model_ema.copy_to(self)
-            if context is not None:
-                print(f"{context}: Switched to EMA weights")
-        try:
-            yield None
-        finally:
-            if self.use_ema:
-                self.model_ema.restore(self.parameters())
-                if context is not None:
-                    print(f"{context}: Restored training weights")
+        print('num_scales: ' + str(self.num_scales))
 
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -125,46 +128,72 @@ class GAN(BaseModel):
         parser.add_argument("--downbranch", type=int, default=1)
         parser.add_argument("--resizebranch", type=int, default=1)
         parser.add_argument('--lbm_ms_ssim', type=float, default=0, help='weight for ms_ssim loss')
+        # Head distillation (the ONLY loss the coarse heads get; cannot touch the trunk)
+        parser.add_argument("--lamb_pyr", type=float, default=1.0,
+                            help='weight for the head distillation L1 (out128/out64 vs avg-pooled '
+                                 'DETACHED out0; trains only the head convs)')
         # VQ specific arguments
         parser.add_argument("--ldmyaml", type=str, default='vqgan')
-        parser.add_argument("--use_ema", action='store_true', help='use exponential moving average')
         parser.add_argument("--remap", type=str, default=None, help='remap indices')
         parser.add_argument("--sane_index_shape", action='store_true', help='return indices as bhw')
         parser.add_argument("--lr_g_factor", type=float, default=1.0, help='learning rate factor for generator')
-        parser.add_argument("--vae", action='store_true', help='use VAE (KL) instead of VQ bottleneck')
+        parser.add_argument("--num_scales", type=int, default=4,
+                            help='number of VQ scales coarse-to-fine (1 = original single VQ)')
+        parser.add_argument("--shared_codebook", action='store_true',
+                            help='share a single codebook across all scales (VAR paper setting)')
         return parent_parser
 
     def encode(self, x):
-        """Encode input to latent space (VQ or VAE bottleneck)"""
+        """
+        Residual multi-scale VQ encoding following VAR Algorithm 1
+        (unchanged from vqcleanM0aMS — measured ~free on 2D recon sharpness).
+        """
         h, hbranch, hz = self.encoder(x)
-        if self.use_vae:
-            moments = self.quant_conv(h)
-            posterior = DiagonalGaussianDistribution(moments)
-            return posterior, None, None, h, None
-        else:
-            h = self.quant_conv(h)
-            quant, emb_loss, info = self.quantize(h)
-            return quant, emb_loss, info, h, None
+        H, W = h.shape[-2], h.shape[-1]
+
+        residual = h          # z_channels space, full H × W
+        quants = []
+        emb_losses = []
+        indices = []
+
+        for k in range(self.num_scales):
+            scale = self.scale_factors[k]
+
+            if scale > 1:
+                h_k = F.interpolate(residual, size=(H // scale, W // scale),
+                                    mode='bilinear', align_corners=False)
+            else:
+                h_k = residual
+
+            h_k = self.quant_convs[k](h_k)
+
+            quant_k, emb_loss_k, info_k = self.quantizers[k](h_k)
+            emb_losses.append(emb_loss_k)
+            indices.append(info_k[2])   # codebook indices — store these in Zarr
+
+            if scale > 1:
+                quant_k = F.interpolate(quant_k, size=(H, W),
+                                        mode='bilinear', align_corners=False)
+
+            quant_k_up = self.post_quant_convs[k](quant_k)   # embed_dim → z_channels
+            quants.append(quant_k_up)
+            residual = residual - quant_k_up
+
+        quant = sum(quants)
+        emb_loss = sum(emb_losses) / self.num_scales
+
+        return quant, emb_loss, indices, h, None
 
     def decode(self, quant):
-        """Decode from latent space"""
-        quant = self.post_quant_conv(quant)
         dec = self.decoder(quant)
         return dec
 
-    def forward(self, input, return_pred_indices=False, sample_posterior=True):
-        """Forward pass"""
-        if self.use_vae:
-            posterior, _, _, h, _ = self.encode(input)
-            z = posterior.sample() if sample_posterior else posterior.mode()
-            dec = self.decode(z)
-            return dec, posterior, h, None, z
-        else:
-            quant, diff, (_, _, ind), h, _ = self.encode(input)
-            dec = self.decode(quant)
-            if return_pred_indices:
-                return dec, diff, ind, h, None
-            return dec, diff, h, None, quant
+    def forward(self, input, return_pred_indices=False):
+        quant, diff, indices, h, _ = self.encode(input)
+        dec = self.decode(quant)
+        if return_pred_indices:
+            return dec, diff, indices, h, None
+        return dec, diff, h, None, quant
 
     def get_input(self, batch, k):
         x = batch[k]
@@ -176,11 +205,8 @@ class GAN(BaseModel):
     def adv_loss_six_way(self, x, net_d, truth):
         loss = 0
         loss += self.add_loss_adv(a=x.permute(2, 1, 4, 3, 0)[:, :, :, :, 0], net_d=net_d, truth=truth)
-        #loss += self.add_loss_adv(a=x.permute(2, 1, 3, 4, 0)[:, :, :, :, 0], net_d=net_d, truth=truth)
         loss += self.add_loss_adv(a=x.permute(3, 1, 4, 2, 0)[:, :, :, :, 0], net_d=net_d, truth=truth)
-        #loss += self.add_loss_adv(a=x.permute(3, 1, 2, 4, 0)[:, :, :, :, 0], net_d=net_d, truth=truth)
         loss += self.add_loss_adv(a=x.permute(4, 1, 2, 3, 0)[:, :, :, :, 0], net_d=net_d, truth=truth)
-        #loss += self.add_loss_adv(a=x.permute(4, 1, 3, 2, 0)[:, :, :, :, 0], net_d=net_d, truth=truth)
         loss = loss / 3
         return loss
 
@@ -188,10 +214,6 @@ class GAN(BaseModel):
         return x.permute(4, 1, 2, 3, 0)[::1, :, :, :, 0]
 
     def generation(self, batch, deterministic=False):
-        # cropz is a training-time crop only (gated on self.training, as in the MS
-        # family) — previously unconditional, which silently truncated full-depth
-        # validation/inference volumes (test/inference.py worked around it by zeroing
-        # hparams.cropz after loading; that workaround remains compatible).
         if self.hparams.cropz > 0 and self.training:
             if deterministic:
                 z_init = 0
@@ -199,6 +221,9 @@ class GAN(BaseModel):
                 z_init = np.random.randint(batch['img'][0].shape[4] - self.hparams.cropz)
             for b in range(len(batch['img'])):
                 batch['img'][b] = batch['img'][b][:, :, :, :, z_init:z_init + self.hparams.cropz]
+
+        # Keep all non-input views at full Z for GIF logging (see vqcleanM0aMS).
+        self.aux_views = [batch['img'][b] for b in range(1, len(batch['img']))]
 
         if self.hparams.dsp > 1:
             if deterministic:
@@ -222,14 +247,11 @@ class GAN(BaseModel):
         if self.training:
             input_slice = input_slice.requires_grad_(True)
 
-        result = self.forward(input_slice, return_pred_indices=False)
-        self.reconstructions = result[0]
-        if self.use_vae:
-            self.posterior = result[1]
-        else:
-            self.qloss = result[1]
-        quant = result[4]
+        self.reconstructions, self.qloss, _, _, quant = self.forward(
+            input_slice, return_pred_indices=False
+        )
 
+        # quant is in z_channels space — feed into decoder.conv_in for net_g
         if self.hparams.downbranch > 1:
             quant = quant.permute(1, 2, 3, 0).unsqueeze(0)
             quant = nn.MaxPool3d((1, 1, self.hparams.downbranch))(quant)
@@ -243,10 +265,13 @@ class GAN(BaseModel):
         quant = self.decoder.conv_in(quant)
         quant = quant.permute(1, 2, 3, 0).unsqueeze(0)
 
-        self.XupX = self.net_g(quant, method='decode')['out0']
-        # Match Xup to the output's actual size (not a fixed cropsize cube) so full
-        # z-depth validation keeps Xup and XupX the same shape — same fix as the MS
-        # family; identical to self.upsample(...) during training (crops = cropsize^3).
+        out = self.net_g(quant, method='decode')
+        self.XupX = out['out0']         # full-res isotropic output (vqclean-recipe trained)
+        self.XupX128 = out['out128']    # 1/2-res head (read-only tap)
+        self.XupX64 = out['out64']      # 1/4-res head (read-only tap)
+        # Extra GIF panels for MLflow logging (base.py upsamples with nearest-neighbor).
+        self.gif_scales = [self.XupX128, self.XupX64]
+        # Match Xup to the network output's actual size (full z-depth validation).
         self.Xup = F.interpolate(self.oriX, size=self.XupX.shape[2:], mode='trilinear')
 
     def get_projection(self, x, depth, how='mean'):
@@ -287,28 +312,28 @@ class GAN(BaseModel):
         loss_dict['l1'] = loss_l1
         loss_g += loss_l1 * self.hparams.lamb
 
+        # --- Head distillation (trunk-pure) ---
+        # Targets are ALWAYS detached; the taps inside ed023emsdet are detached too,
+        # so this term trains only conv7_128/conv7_64. Not optional by design.
+        ref128 = F.avg_pool3d(self.XupX, 2).detach()
+        ref64 = F.avg_pool3d(self.XupX, 4).detach()
+        loss_pyr = self.add_loss_l1(self.XupX128, ref128) + self.add_loss_l1(self.XupX64, ref64)
+        loss_dict['pyr'] = loss_pyr
+        loss_g += loss_pyr * self.hparams.lamb_pyr
+
         oriXpermute = self.oriX.permute(4, 1, 2, 3, 0)[:, :, :, :, 0]
         if self.hparams.tc:
             oriXpermute = self.oriX.permute(4, 1, 2, 3, 0)[:, :1, :, :, 0]
 
-        if self.use_vae:
-            aeloss, log_dict_ae = self.loss(
-                oriXpermute, self.reconstructions, self.posterior,
-                0, self.global_step,
-                last_layer=self.get_last_layer(), split="train"
-            )
-            loss_g += aeloss
-            loss_dict['ae'] = aeloss
-        else:
-            aeloss, log_dict_ae = self.loss(
-                self.qloss, oriXpermute, self.reconstructions,
-                0, self.global_step,
-                last_layer=self.get_last_layer(), split="train"
-            )
-            loss_g += aeloss
-            loss_dict['ae'] = aeloss
-            loss_dict['vq'] = self.qloss
-            loss_g += self.qloss
+        aeloss, log_dict_ae = self.loss(
+            self.qloss, oriXpermute, self.reconstructions,
+            0, self.global_step,
+            last_layer=self.get_last_layer(), split="train"
+        )
+        loss_g += aeloss
+        loss_dict['ae'] = aeloss
+        loss_dict['vq'] = self.qloss
+        loss_g += self.qloss
 
         loss_dict['sum'] = loss_g
         return loss_dict
@@ -327,18 +352,11 @@ class GAN(BaseModel):
         if self.hparams.tc:
             oriXpermute = self.oriX.permute(4, 1, 2, 3, 0)[:, :1, :, :, 0]
 
-        if self.use_vae:
-            discloss, log_dict_disc = self.loss(
-                oriXpermute, self.reconstructions, self.posterior,
-                1, self.global_step,
-                last_layer=self.get_last_layer(), split="train"
-            )
-        else:
-            discloss, log_dict_disc = self.loss(
-                self.qloss, oriXpermute, self.reconstructions,
-                1, self.global_step,
-                last_layer=self.get_last_layer(), split="train"
-            )
+        discloss, log_dict_disc = self.loss(
+            self.qloss, oriXpermute, self.reconstructions,
+            1, self.global_step,
+            last_layer=self.get_last_layer(), split="train"
+        )
         loss_d += discloss
         loss_dict['disc'] = discloss
         loss_dict['sum'] = loss_d
@@ -347,30 +365,25 @@ class GAN(BaseModel):
     def get_last_layer(self):
         return self.decoder.conv_out.weight
 
-    def on_train_batch_end(self, *args, **kwargs):
-        if self.use_ema:
-            self.model_ema(self)
-
     def configure_optimizers(self):
         lr_d = self.hparams.lr
         lr_g = getattr(self.hparams, 'lr_g_factor', 1.0) * self.hparams.lr
         print("lr_d", lr_d)
         print("lr_g", lr_g)
 
-        ae_params = (
+        opt_ae = torch.optim.Adam(
             list(self.encoder.parameters()) +
             list(self.decoder.parameters()) +
-            list(self.quant_conv.parameters()) +
-            list(self.post_quant_conv.parameters()) +
-            list(self.net_g.parameters())
+            list(self.quantizers.parameters()) +
+            list(self.quant_convs.parameters()) +
+            list(self.post_quant_convs.parameters()) +
+            list(self.net_g.parameters()),
+            lr=lr_g, betas=(0.5, 0.9)
         )
-        if not self.use_vae:
-            ae_params += list(self.quantize.parameters())
-
-        opt_ae = torch.optim.Adam(ae_params, lr=lr_g, betas=(0.5, 0.9))
 
         opt_disc = torch.optim.Adam(
-            list(self.loss.discriminator.parameters()) + list(self.net_d.parameters()),
+            list(self.loss.discriminator.parameters()) +
+            list(self.net_d.parameters()),
             lr=lr_d, betas=(0.5, 0.9)
         )
 
@@ -378,8 +391,10 @@ class GAN(BaseModel):
             scheduler = instantiate_from_config(self.hparams.scheduler_config)
             print("Setting up LambdaLR scheduler...")
             scheduler = [
-                {'scheduler': LambdaLR(opt_ae, lr_lambda=scheduler.schedule), 'interval': 'step', 'frequency': 1},
-                {'scheduler': LambdaLR(opt_disc, lr_lambda=scheduler.schedule), 'interval': 'step', 'frequency': 1},
+                {'scheduler': LambdaLR(opt_ae, lr_lambda=scheduler.schedule),
+                 'interval': 'step', 'frequency': 1},
+                {'scheduler': LambdaLR(opt_disc, lr_lambda=scheduler.schedule),
+                 'interval': 'step', 'frequency': 1},
             ]
             self.net_g_scheduler = scheduler[0]['scheduler']
             self.net_d_scheduler = scheduler[1]['scheduler']
@@ -396,19 +411,14 @@ class GAN(BaseModel):
             state_dict[f'encoder.{k}'] = v
         for k, v in self.decoder.state_dict().items():
             state_dict[f'decoder.{k}'] = v
-        if not self.use_vae:
-            for k, v in self.quantize.state_dict().items():
-                state_dict[f'quantize.{k}'] = v
-        for k, v in self.quant_conv.state_dict().items():
-            state_dict[f'quant_conv.{k}'] = v
-        for k, v in self.post_quant_conv.state_dict().items():
-            state_dict[f'post_quant_conv.{k}'] = v
+        for k, v in self.quantizers.state_dict().items():
+            state_dict[f'quantizers.{k}'] = v
+        for k, v in self.quant_convs.state_dict().items():
+            state_dict[f'quant_convs.{k}'] = v
+        for k, v in self.post_quant_convs.state_dict().items():
+            state_dict[f'post_quant_convs.{k}'] = v
         for k, v in self.discriminator.state_dict().items():
             state_dict[f'loss.discriminator.{k}'] = v
-
-        if self.use_ema:
-            for k, v in self.model_ema.state_dict().items():
-                state_dict[f'model_ema.{k}'] = v
 
         checkpoint = {
             "state_dict": state_dict,

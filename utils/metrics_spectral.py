@@ -37,6 +37,31 @@ def mean_power_spectrum(planes):
     return torch.fft.fftshift(spec, dim=(-2, -1)).mean(dim=(0, 1))
 
 
+# Radial bands in cycles/pixel (Nyquist = 0.5) for the spectral-retention metric
+# (val_spec_*). 'mid' ~ the scale of real structures (filament widths, boundaries)
+# — where vqclean's visible fidelity advantage was measured; 'hi' ~ fine grain,
+# inflated by noise/dropout/lattice, read with care. On a 384^2 plane these are
+# radii 32-96 and 96-192. 'lo' is omitted (always ~1, uninformative).
+SPECTRAL_BANDS = {
+    'mid': (1 / 12, 1 / 4),
+    'hi':  (1 / 4, 1 / 2),
+}
+
+
+def band_power(spec, bands=SPECTRAL_BANDS):
+    """Integrate an fftshifted (H, W) power spectrum over radial frequency bands.
+
+    Bands are (lo, hi) in cycles/pixel; the radius grid is normalized per-axis so
+    non-square planes probe the same physical frequencies. Returns
+    {band_key: 0-dim tensor}.
+    """
+    H, W = spec.shape
+    fy = (torch.arange(H, device=spec.device, dtype=spec.dtype) - H // 2) / H
+    fx = (torch.arange(W, device=spec.device, dtype=spec.dtype) - W // 2) / W
+    r = torch.sqrt(fy[:, None] ** 2 + fx[None, :] ** 2)
+    return {k: spec[(r >= lo) & (r < hi)].sum() for k, (lo, hi) in bands.items()}
+
+
 def lattice_peak_ratios(spec, probes=LATTICE_PROBES,
                         peak_half=1, bg_half=10, exclude_half=2, eps=1e-12):
     """Peak-to-local-background ratio at each probe frequency. ~1 = clean.

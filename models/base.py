@@ -17,7 +17,7 @@ from torchmetrics.image.kid import KernelInceptionDistance
 from networks.networks import get_scheduler
 from networks.loss import GANLoss
 from networks.registry import network_registry
-from utils.metrics_spectral import mean_power_spectrum, lattice_peak_ratios
+from utils.metrics_spectral import mean_power_spectrum, lattice_peak_ratios, band_power
 from utils.data_utils import *
 import tifffile as tiff
 
@@ -445,6 +445,29 @@ class BaseModel(pl.LightningModule):
                 else:
                     self._val_spec_acc[k] = [spec, 1]
 
+            # Mid/high-band spectral retention vs the observed input slices
+            # (visual-parity tracking — doc/MS_sharpness.md, memory 2026-07-09):
+            #   val_spec_recon_{mid,hi} — 2D VQ recon vs input (does the latent carry it?)
+            #   val_spec_xy_{mid,hi}    — 3D output's XY planes vs input (does the trunk render it?)
+            # Same Welch accumulation as the lattice metric; ratios in validation_epoch_end.
+            # ~1 = full retention. References through this code path: see run.sh comments.
+            if batch_idx == 0:
+                self._val_band_acc = {}
+            if hasattr(self, 'reconstructions') and hasattr(self, 'oriX'):
+                inp_xy = self.oriX.permute(4, 1, 2, 3, 0)[:, :1, :, :, 0]      # (Zin, 1, Y, X)
+                rec_xy = self.reconstructions[:, :1]                            # (Zin, 1, Y, X)
+                step = max(1, int(getattr(self, 'uprate', 1)))
+                pred_xy = self.XupX.permute(0, 4, 1, 2, 3).reshape(B * Z, C, X, Y)[::step, :1]
+                for name, planes in (('inp', inp_xy), ('rec', rec_xy), ('xy', pred_xy)):
+                    if planes.shape[-2:] != inp_xy.shape[-2:]:
+                        continue  # never mix plane sizes within a key
+                    spec = mean_power_spectrum(planes.float())
+                    if name in self._val_band_acc:
+                        self._val_band_acc[name][0] += spec
+                        self._val_band_acc[name][1] += 1
+                    else:
+                        self._val_band_acc[name] = [spec, 1]
+
         # Accumulate for the end-of-epoch console printout (this rank's shard only —
         # the logged metrics below are the properly rank-synced values).
         if batch_idx == 0:
@@ -515,6 +538,21 @@ class BaseModel(pl.LightningModule):
                 self.log('val_lat_' + k, lat[k], logger=True, sync_dist=True)
             self._val_spec_acc = {}
 
+        # Spectral retention ratios vs the input's XY spectrum (see validation_step).
+        # sync_dist averages the per-rank ratios (same assumption as val_lat_*).
+        band_acc = getattr(self, '_val_band_acc', None)
+        spec_ret = {}
+        if band_acc and 'inp' in band_acc:
+            inp_bands = band_power(band_acc['inp'][0] / band_acc['inp'][1])
+            for name, tag in (('rec', 'recon'), ('xy', 'xy')):
+                if name in band_acc:
+                    b = band_power(band_acc[name][0] / band_acc[name][1])
+                    for band in b:
+                        ratio = b[band] / inp_bands[band].clamp_min(1e-12)
+                        spec_ret[f'{tag}_{band}'] = ratio
+                        self.log(f'val_spec_{tag}_{band}', ratio, logger=True, sync_dist=True)
+            self._val_band_acc = {}
+
         # Console summary per epoch (rank 0's shard; MLflow/TB hold the synced values)
         acc = getattr(self, '_val_lpips_acc', None)
         if self.trainer.is_global_zero and acc and acc['pred']:
@@ -523,6 +561,9 @@ class BaseModel(pl.LightningModule):
             if lat:
                 msg += ' | lat ' + ' '.join('{} {:.1f}'.format(k, float(v))
                                             for k, v in lat.items())
+            if spec_ret:
+                msg += ' | spec ' + ' '.join('{} {:.2f}'.format(k, float(v))
+                                             for k, v in spec_ret.items())
             print(msg)
 
         # Log a GIF from validation's first batch (stored in validation_step), every 5 epochs.

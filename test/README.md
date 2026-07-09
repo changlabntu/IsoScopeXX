@@ -28,8 +28,14 @@ float32 `.tif`.
 python test/inference.py \
     --checkpoint /home/gary/workspace/logs/THX10SDM20xw/thx10/vqcleanM0aMSskipP/Scale4/band5 \
     --source /home/gary/workspace/Data/THX10SDM20xw/roiD/val/roiD \
-    --destination test/out/band5 --save_input
+    --destination /home/gary/workspace/Data/THX10SDM20xw/out/band5 --save_input
 ```
+
+`--destination` defaults to `/home/gary/workspace/Data/THX10SDM20xw/out/{experiment
+name}` (`DEFAULT_OUT` in `test/inference.py`). `test/concat_views.py` builds
+per-model `[XY | ZX]` view concats into `out/summary/` (plus `input.tif`, the
+trilinear-upsampled input, as reference) — see the sweep block in
+`test/inference.sh`.
 
 - Generator components run in `.train()` by default (MC dropout: batch-stat BN
   + active dropout, stochastic per run); pass `--eval` for deterministic

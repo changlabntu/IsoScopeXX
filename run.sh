@@ -51,7 +51,31 @@
 # Compare vs thx skipE/skipEcoarse0 at matched optimizer steps (the clean UB-vs-U BlurPool isolation lives on
 # fuse). Success = val_lat_* stays ~1 AND val_kid recovers to <=skipE (4.97) AND val_lpips_pred <= MSskip (0.577).
 
-CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/Scale4/max5skip4coarse0 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri thx-MS
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/Scale4/max5skip4coarse0 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 0 --tracking_uri thx-MS
+
+# thx vqcleanMH: vqclean texture + multi-scale latent + READ-ONLY multi-head output (plan 2026-07-09).
+# Trunk trains under the EXACT vqclean recipe (lr 2e-4, no EMA, no coarse GANs, no pyramid pressure,
+# six-way adv + max-projection L1); coarse heads are observers — detached taps in ed023emsdet +
+# detached distillation targets, so head gradients reach only conv7_128/conv7_64. Multi-scale
+# residual VQ kept (measured ~free on 2D recon). Lattice is ACCEPTED by design (ConvTranspose +
+# plain patch_16); val_lat_* will read high — record, don't fight. Needs vqclean-scale training
+# (~600 epochs at its cadence ≈ 20k optimizer steps). Success (val_spec_* = mid/high-band spectral
+# retention vs input, logged every val epoch; references measured through the same code path on
+# val/roiD/th000008003, train-mode draws):
+#   val_spec_recon_mid -> vqclean's 0.84   (MS@100: 0.46, MSskip: 0.37, skipE: 0.25)
+#   val_spec_xy_mid    -> vqclean's 0.39   (MS@100: 0.38, skipE: 0.20) — trunk renders < half of
+#   what the latent carries (0.84), so there is headroom beyond parity.
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanMH/Scale1/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanMH --num_scales 1 --lr 0.0002 --netG ed023emsdet --netD patch_16 --tracking_uri thx-MS
+
+# thx vqclean benchmark: the EXACT vqclean model on the same data/geometry/recipe as the MH runs —
+# the control that separates "vqcleanMH == vqclean + heads" from any residual difference (extra
+# post_quant_conv in the net_g feed, head distillation, module plumbing). Same lr 2e-4, roiD,
+# 192/24; only deltas vs MH-Scale1: --models vqclean, --netG ed023e (no heads), no --num_scales
+# (vqclean's parser doesn't define it). Historical vqclean (logs0, roiAdsp4 128/16) hit
+# val_spec_recon_mid 1.07@ep100 (~3.4k steps) / 0.94@ep200 / 0.84@ep600 — this rerun re-pins those
+# on roiD at ~77 steps/epoch. NOTE: models/vqclean.py got the Xup-size fix (F.interpolate to XupX
+# shape, train-path identical) so full-depth roiD validation works.
+CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqclean/roiD192/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqclean --lr 0.0002 --netG ed023e --netD patch_16 --tracking_uri thx-MS
 
 
 # remote tracking: --tracking_uri https://mlflow.ntugarylab.dpdns.org/
