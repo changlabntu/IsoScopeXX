@@ -27,6 +27,9 @@ def get_args():
     parser.add_argument('--gamma', type=float, default=0.25,
                         help="exponent for nm='11g': [-1,1] input is unit-mapped, raised to this power, "
                              "rescaled back to [-1,1]; <1 expands the dark range")
+    parser.add_argument('--gamma_lo', type=float, default=-1.0,
+                        help="floor for nm='11g': input at or below this maps to -1 (clips the noise "
+                             "band), gamma then acts on [gamma_lo, 1] only; -1 disables the floor")
 
     # Model
     parser.add_argument('--gan_mode', type=str, help='gan mode')

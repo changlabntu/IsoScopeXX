@@ -189,10 +189,11 @@ class PairedImageDataset(data.Dataset):
         elif method == '11p':  # -1 to 1 via shared per-view robust percentiles
             lo, hi = self.norm_stats[key]
             img = np.clip((img - lo) / (hi - lo + 1e-8), 0, 1) * 2 - 1
-        elif method == '11g':  # compressive gamma (--gamma, <1 expands the dark range where
-            # left-piled data lives, keeping the bulk out of tanh saturation).
-            # Input must already be normalized to [-1, 1].
-            img = np.clip((img + 1) / 2, 0, 1)
+        elif method == '11g':  # floor + compressive gamma. Input must already be in [-1, 1].
+            # --gamma_lo clips the noise band to a flat -1 (nothing for the GAN to match);
+            # --gamma (<1) then expands the faint end of the remaining foreground range.
+            lo = getattr(self.config, 'gamma_lo', -1.0)
+            img = np.clip((img - lo) / (1 - lo), 0, 1)
             img = img ** getattr(self.config, 'gamma', 0.25) * 2 - 1
         elif method == '00':
             pass

@@ -79,17 +79,20 @@ CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --
 # recipe was never the problem; if not, the recipe blame regains support.
 #CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipE/roiD192/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.002 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri thx-MS-384
 
-# --- gamma-remapped intensity (nm 11g: [-1,1] input, gamma 0.25; no sidecar needed) ---
-# roiD is extremely left-piled (median -0.9, deep in tanh saturation); 11g recenters the bulk
-# to ~0 (skew +4.7 -> +0.2). Input must be pre-normalized to [-1,1]. NEW comparability boundary:
-# metric scales shift, so these runs get fresh roiD192g prjs + the thx-MS-384g store — never
-# score them against nm=00 runs.
+# --- foreground-gamma intensity (nm 11g + floor: --gamma_lo clips the noise band to -1,
+# --gamma expands the faint foreground) ---
+# Lesson from the roiD192g gamma-0.25 run (mlflow 0606f574, ep84): the dark bulk of roiD is
+# acquisition noise, not texture — plain gamma amplified it into the dominant image content and
+# the GAN regressed below its do-nothing baseline. Floor at the noise ceiling (-0.80 by visual sweep; med+4MAD -0.70 clipped real dim-volume structure)
+# instead: background -> flat -1 (~90% of voxels), foreground gets the range (median -0.40).
+# Input must be pre-normalized to [-1,1]. THIRD metric-scale regime: fresh roiD192gf prjs,
+# thx-MS-384gf store — never score against nm=00 or gamma-0.25 runs.
 
-# skipE on remapped data — new baseline/comparator (lr 5e-4 kept from the running clean skipE)
-#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipE/roiD192g/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.0005 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri thx-MS-384g
+# skipE foreground-gamma baseline
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipE/roiD192gf/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.5 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.0005 --netG ed023emsfpn --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri thx-MS-384gf
 
-# skipUB on remapped data — anti-alias stack (resize-conv netG + BlurPool netD), only deltas vs the line above
-#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/roiD192g/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri thx-MS-384g
+# skipUB foreground-gamma — anti-alias stack (resize-conv netG + BlurPool netD), only deltas vs the line above
+#CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/roiD192gf/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.5 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri thx-MS-384gf
 
 # remote tracking: --tracking_uri https://mlflow.ntugarylab.dpdns.org/
 
