@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Precompute per-view normalization constants for the '11p'/'11pg' dataloader methods.
+"""Precompute per-view normalization constants for the '11p' dataloader method.
 
 For each source folder under `<dataset>/train/` it computes robust percentiles
 (`--lo`/`--hi`) over a sample of cubes and writes them to

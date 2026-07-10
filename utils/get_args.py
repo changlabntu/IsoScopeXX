@@ -25,8 +25,8 @@ def get_args():
     parser.add_argument('--direction', type=str, help='paired: a_b, unpaired a%b ex:(a_b%c_d)')
     parser.add_argument('--nm', type=str, help='way to normalize itensity value')
     parser.add_argument('--gamma', type=float, default=0.25,
-                        help="exponent for nm='11pg': unit-mapped intensity is raised to this power "
-                             "before rescaling to [-1,1]; <1 expands the dark range")
+                        help="exponent for nm='11g': [-1,1] input is unit-mapped, raised to this power, "
+                             "rescaled back to [-1,1]; <1 expands the dark range")
 
     # Model
     parser.add_argument('--gan_mode', type=str, help='gan mode')
