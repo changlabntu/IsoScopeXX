@@ -79,7 +79,7 @@ class PairedImageDataset(data.Dataset):
         # Load shared per-view normalization constants (precomputed sidecar JSON).
         # Must happen BEFORE any _load_image call below (e.g. _get_resize_value),
         # so the '11p' branch always has its stats ready.
-        self.norm_stats = self._load_norm_stats() if getattr(self.config, 'nm', None) == '11p' else None
+        self.norm_stats = self._load_norm_stats() if getattr(self.config, 'nm', None) in ('11p', '11pg') else None
 
         # Find common images across all directories
         self.image_names = self._get_common_images()
@@ -147,7 +147,7 @@ class PairedImageDataset(data.Dataset):
         stats_path = self.root.parent / 'norm_stats.json'
         if not stats_path.is_file():
             raise FileNotFoundError(
-                f"nm='11p' needs precomputed constants at {stats_path}. "
+                f"nm='{self.config.nm}' needs precomputed constants at {stats_path}. "
                 f"Run: python tools/compute_norm_stats.py --env <env> --dataset <dir>"
             )
         with open(stats_path) as f:
@@ -189,6 +189,11 @@ class PairedImageDataset(data.Dataset):
         elif method == '11p':  # -1 to 1 via shared per-view robust percentiles
             lo, hi = self.norm_stats[key]
             img = np.clip((img - lo) / (hi - lo + 1e-8), 0, 1) * 2 - 1
+        elif method == '11pg':  # '11p' + compressive gamma (--gamma, <1 expands the dark
+            # range where left-piled data lives, keeping the bulk out of tanh saturation)
+            lo, hi = self.norm_stats[key]
+            img = np.clip((img - lo) / (hi - lo + 1e-8), 0, 1)
+            img = img ** getattr(self.config, 'gamma', 0.25) * 2 - 1
         elif method == '00':
             pass
         return img
