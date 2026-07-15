@@ -1,0 +1,35 @@
+# Objective-only control for the recon_hi ceiling (companion to vqganZ16.yaml):
+# SINGLE delta vs vqgan.yaml -> disc_start 250001->10001 (global steps, 2
+# opt-steps/batch => disc on at train step ~5k, ~ep 40, post l1/ae plateau).
+# Architecture untouched: latent size, compression ratio, and checkpoint
+# compatibility identical to the current baseline AE.
+# Attribution logic vs vqganZ16:
+#   D10 reaches Z16's recon_hi  -> ceiling was the objective; capacity was free
+#   D10 stalls ~0.35, Z16 clears -> ceiling was capacity (bits)
+#   both stall                   -> trunk/decoder is next (research doc opt B+)
+model:
+  base_learning_rate: 4.5e-6
+  target: taming.models.vqgan.VQModel
+  params:
+    embed_dim: 4
+    n_embed: 256
+    ddconfig:
+      double_z: False
+      z_channels: 4
+      resolution: 256
+      in_channels: 1
+      out_ch: 1
+      ch: 64
+      ch_mult: [1,2,2,4]  # num_down = len(ch_mult)-1
+      num_res_blocks: 1
+      attn_resolutions: []
+      dropout: 0.0
+
+    lossconfig:
+      target: taming.modules.losses.vqperceptual.VQLPIPSWithDiscriminator
+      params:
+        disc_conditional: False
+        disc_in_channels: 1
+        disc_start: 10001
+        disc_weight: 0.8
+        codebook_weight: 1.0

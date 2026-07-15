@@ -1,0 +1,37 @@
+# AE-capacity upgrade of vqgan.yaml targeting the recon_hi 0.26-0.28 ceiling
+# (doc/baseline-skipU-gfC-2026-07.md, doc/research-2d-encoder-upgrades-2026-07.md opt A):
+#   z_channels/embed_dim 4->16  - latent-interface width (SD3/FLUX 4->16 lever)
+#   n_embed 256->1024           - 8->10 bits/token; the actual information knob
+#   disc_start 250001->10001    - global steps (2 opt-steps/batch) -> disc on at
+#                                 train step ~5k (~ep 40), post l1/ae plateau,
+#                                 instead of ep ~1000. gfB/gfC showed the disc
+#                                 lifts recon_hi 0.28->0.35+; start it early.
+# ch/ch_mult UNCHANGED: block_in ch*ch_mult[-1]=256 must equal 8*ngf (net_g decode
+# entry) and len(ch_mult) pins f=8 (latent 24x24 -> 8x decode -> cropsize 192).
+# New AE architecture: old checkpoints will NOT load - use a fresh --prj.
+model:
+  base_learning_rate: 4.5e-6
+  target: taming.models.vqgan.VQModel
+  params:
+    embed_dim: 16
+    n_embed: 1024
+    ddconfig:
+      double_z: False
+      z_channels: 16
+      resolution: 256
+      in_channels: 1
+      out_ch: 1
+      ch: 64
+      ch_mult: [1,2,2,4]  # num_down = len(ch_mult)-1
+      num_res_blocks: 1
+      attn_resolutions: []
+      dropout: 0.0
+
+    lossconfig:
+      target: taming.modules.losses.vqperceptual.VQLPIPSWithDiscriminator
+      params:
+        disc_conditional: False
+        disc_in_channels: 1
+        disc_start: 10001
+        disc_weight: 0.8
+        codebook_weight: 1.0
