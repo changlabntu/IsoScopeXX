@@ -1,9 +1,15 @@
 # Experimental summary: MS line — skipE vs skipU(B), with/without foreground-gamma
 
-Status as of **2026-07-11**. Covers the clean (post-precrop-fix) THX10SDM20xw/roiD campaign in
+> **2026-07-15 — baseline decision**: skipU + gfC (γ0.7/−0.8) is now the declared roiD-line
+> baseline, ep-200 checkpoint of run `b63909b3` as the safe default. Rationale, checkpoint
+> policy, and scope conditions in `doc/baseline-skipU-gfC-2026-07.md`.
+
+Status as of **2026-07-14**. Covers the clean (post-precrop-fix) THX10SDM20xw/roiD campaign in
 remote MLflow **experiment 12** (`https://mlflow.ntugarylab.dpdns.org/#/experiments/12`), plus the
 gamma-regime lessons that led to it. Blurred-era (pre-fix) results are cited only where the
-precrop audit ruled them valid — see `doc/audit_precrop_2026-07-09.md` for the per-claim verdicts.
+precrop audit (2026-07-09, doc retired) ruled them valid — the standing rules: `val_lat_*` and
+other self-normalized ratios survive across the fix; absolute-scale metrics and the blurred-era
+gates do not (see the appendix note).
 
 ## 1. Models and naming
 
@@ -38,11 +44,23 @@ that travel, and even those only qualitatively.
    thx-MS-384g store, ep 84): the dark bulk of roiD is acquisition noise, not texture; plain
    gamma amplified it into the dominant image content and the GAN regressed below its
    do-nothing baseline. Killed. Lesson recorded in `run.sh`.
-3. **Foreground-gamma (nm=11g `--gamma 0.5 --gamma_lo -0.8`) — current regime ("gf").**
+3. **Foreground-gamma (nm=11g `--gamma 0.5 --gamma_lo -0.8`) — the "gf" regime.**
    `--gamma_lo` clips the noise band flat to −1 (~90% of voxels) so the gamma expansion goes
    to faint foreground only (floor −0.80 set by visual sweep; med+4·MAD −0.70 clipped real dim
    structure). Fresh `roiD192gf` prjs, thx-MS-384gf store. Both head-to-head runs below use it.
    Fuse-tuned floor is −0.9 (`zcube192gf`, fuse-MS-gf store).
+4. **Foreground-gamma ladder (2026-07-14, §7) — `--gamma 0.7 --gamma_lo -0.8` ("gfC") is the
+   current best point.** Motivation: at gamma 0.5 the top half of the foreground intensity
+   range is compressed into ~15% of the output range — blob interiors lose contrast and read
+   as overexposed. Raising gamma restores highlight headroom without touching the noise floor
+   (the two knobs decouple: the floor kills noise, the exponent sets highlight compression).
+   The ladder bounds the optimum from both sides: 0.75/−0.85 (`gfB`) collapsed over a long run
+   (spectral retention → 0.08, KID → 14.6 — output went band-limited), while 0.7/−0.8 improves
+   on 0.5/−0.8 across the board (§7). Floors are **per-dataset**, backed by measured stats
+   (2026-07-14): roiD noise band median −0.85, so floor −0.8 clips 72% of voxels while −0.9
+   clips only 18% (most noise passes and gets gamma-boosted); fuse zcube noise median −0.964
+   with robust med+4σ edge at −0.909, so its −0.9 floor is exactly the statistical noise
+   cutoff (93% clipped). Do not carry a floor across datasets.
 
 Qualitative w/-vs-w/o gamma read (same skipE architecture): foreground-gamma brought the
 lattice ratio band down from 150–9,900 to 2–33 and lpips margin improved. `val_lat` is
@@ -154,6 +172,13 @@ lr 5e-4 cosine, 4×B200):
 - **In flight**: skipE foreground-gamma on fused zcube (`fuse/vqcleanM0aMSskipE/zcube192gf`,
   cropz 192 dsp 8, `--gamma_lo -0.9`, fuse-MS-gf store) — the gf recipe transferred to real
   8× anisotropy.
+- **In flight (gamma ladder, §7)**: skipU gfC (`b63909b3`, 0.7/−0.8, best current point) and
+  skipU gfb (`f7745c66`, 0.5/−0.9 — the floor-mismatch control; **logs no val metrics at all**
+  as of 07-14, ep 120 — check whether its val loop is running before reading anything into it).
+- **Fuse gamma**: keep 0.5/−0.9 there for now — fuse foreground is dim-skewed (median fg voxel
+  maps to −0.59 in gamma space, only ~1.5% of fg above 0.8), so the highlight-compression
+  motive for gamma 0.7 barely applies; raising gamma would cost the faint-end lift where fuse
+  needs it most. If fuse blobs look hot, tone-map at decode (`--gamma_dec` ≈ 0.45) instead.
 
 ## Appendix: run ledger (experiment 12, remote)
 
@@ -161,7 +186,11 @@ lr 5e-4 cosine, 4×B200):
 |---|---|---|---|---|---|---|
 | skipE_epoch_290 | `0c080e3d` | `thx10/vqcleanM0aMSskipE/roiD192/max5skip4` | 00 / — | emsfpn / patch_16 | FAILED 07-10 10:28 | ep 362, s45374 |
 | skipE_gamma | `444cb790` | `thx10/vqcleanM0aMSskipE/roiD192gf/max5skip4` | 11g / 0.5, lo −0.8 | emsfpn / patch_16 | stopped 07-10 21:34 (tag RUNNING) | ep 342, s42874 |
-| skipU_gamma | `f5533c4f` | `thx10/vqcleanM0aMSskipUB/roiD192gf/max5skip4` | 11g / 0.5, lo −0.8 | emsfpnu / patchblur_16 | RUNNING | ep 383+, s48k+ |
+| skipU_gamma | `f5533c4f` | `thx10/vqcleanM0aMSskipUB/roiD192gf/max5skip4` | 11g / 0.5, lo −0.8 | emsfpnu / patchblur_16 | FAILED/stopped | ep 653, s81.7k |
+| skipU (decoupling, §6) | `a46f1425` | `thx10/vqcleanM0aMSskipU/roiD192gf/max5skip4` | 11g / 0.5, lo −0.8 | emsfpnu / patch_16 | RUNNING | ep 421+, s52.7k+ |
+| skipU gfB (§7) | `6957478c` | `thx10/vqcleanM0aMSskipU/roiD192gfB/max5skip4` | 11g / 0.75, lo −0.85 | emsfpnu / patch_16 | FAILED (late collapse) | ep 1304, s163k |
+| skipU gfb (§7) | `f7745c66` (retry of `8e8046de`) | `thx10/vqcleanM0aMSskipU/roiD192gfb/max5skip4` | 11g / 0.5, lo −0.9 | emsfpnu / patch_16 | RUNNING, **no val metrics** | ep 120 |
+| skipU gfC (§7) | `b63909b3` | `thx10/vqcleanM0aMSskipU/roiD192gfC/max5skip4` | 11g / 0.7, lo −0.8 | emsfpnu / patch_16 | RUNNING | ep 366+, s46k+ |
 
 Plain-gamma failure `0606f574` (ep 84) is in the local thx-MS-384g store, not on the remote.
 Blurred-era MS/MSfpn/MSskip standings were purged with the audit; do not resurrect their
@@ -262,7 +291,7 @@ So skipE→skipU isolates the generator; skipU→skipUB isolates BlurPool.
    This **qualifies the §"superiority argument"** — skipUB is not Pareto-cleaner than skipU on
    everything; it trades KID for Z-stripe suppression and stability.
 
-### Implication for the research plan (doc/MS-research-plan.md)
+### Implication for the research plan (doc/research-MS-plan.md)
 
 The ideal operating point wants all three at once: lattice-gone (keep resize-conv netG) + KID
 recovered (drop BlurPool) + Z-stripe suppressed and stable (what BlurPool bought). No existing
@@ -274,3 +303,57 @@ resampling-phase artifact rather than a fixed generator feature.
 Caveats: single run, noisy gf-regime KID (skipU final-third range [0.56, 6.38]); skipE/skipUB
 columns are §3's logged values, not re-pulled; run still training. Metrics pulled from the
 MLflow REST API (`metrics/get-history`, matched near step 43k).
+
+## 7. The gamma ladder on skipU (2026-07-14)
+
+Three runs vary only the `--gamma`/`--gamma_lo` pair on the identical skipU architecture
+(`vqcleanM0aMSskipE` + `ed023emsfpnu` + `patch_16`, roiD192, max5skip4), so the gamma effect
+is single-variable against §6's `a46f1425`:
+
+- **gfC** `b63909b3` — **0.7 / −0.8** (highlight-headroom fix, floor kept) — RUNNING, ep 366 / s46k
+- **gfB** `6957478c` — 0.75 / −0.85 — ran long (ep 1304 / s163k), FAILED tag
+- **gfb** `f7745c66` — 0.5 / −0.9 (fuse floor on roiD; on-purpose mismatch control) — logs
+  **no val metrics**; nothing to compare yet
+
+Regime caveat applies with force here: each gamma has its own metric scale (`val_lpips_tgt`
+baseline: 0.521 at γ0.5, 0.476 at γ0.7/lo−0.8, 0.589 at γ0.75/lo−0.85). Compare **margins
+below own baseline** and the self-normalized `val_lat_*` ratios; treat KID/spec across
+regimes qualitatively.
+
+### Matched-step (~43k) with late-window (last-10-val mean) in parens
+
+| metric | skipU γ0.5 (`a46f1425`) | **gfC γ0.7 (`b63909b3`)** | gfB γ0.75 (`6957478c`) |
+|---|---|---|---|
+| lpips margin below own tgt | 5.4% (late **2.6%**, decaying) | **6.3% (late 7.6%, holding)** | 3.7% (late 15.8%, but see collapse) |
+| val_kid | 2.57 (late 1.87) | **1.28 (late 1.69)** | 3.43 → **14.6 late** |
+| val_lat_p2diag | 1.18 (late 3.66) | 2.44 (late **1.98**) | 1.10 → 6.26 late |
+| val_lat_p4diag | 1.08 | 1.12 | 1.09 → 2.36 late |
+| val_lat_p2z | 11.3 (late 17.1) | **4.8 (late 8.0)** | 3.1 (late 1.3) |
+| val_lat_p2a | 2.78 (late 5.32) | **2.85 (late 3.05)** | 4.28 (late 2.21) |
+| val_spec_xy_mid | 0.489 (late 0.616) | 0.582 (late 0.505) | 0.267 → **0.077 late** |
+| val_spec_xy_hi | 0.090 | 0.081 | 0.058 → **0.006 late** |
+
+### Reading
+
+1. **γ0.7/−0.8 beats γ0.5/−0.8 on every axis at matched steps** (architecture identical):
+   healthier and *stable* lpips margin (the γ0.5 run's margin decayed 5.4%→2.6% by s52.7k
+   while gfC holds ~7%), roughly half the KID, p2z stripe at half the amplitude (4.8–8.0 vs
+   11–17), off-diagonal p2a stable instead of drifting, and comparable-to-better mid-band
+   spectral retention. Diagonal lattice stays near the clean floor for both (resize-conv
+   does that regardless of gamma, §6).
+2. **γ0.75/−0.85 is the overshoot bound.** Early it looked fine (all lat ratios ~1–4 at 43k);
+   over the long run the output went band-limited — spec_xy collapsed to 0.077/0.006 and KID
+   blew up to ~14.6. (Its late lpips margin and p2z "improvements" are artifacts of an
+   over-smoothed output: a blurry volume is trivially isotropic and stripe-free.) Interior
+   optimum confirmed: 0.5 over-compresses highlights, 0.75/−0.85 tips into degeneracy.
+3. **gfC's cost profile matches its regime, not a regression**: spec_xy_hi 0.081 ≈ the other
+   resize-conv runs (the HF deficit belongs to the generator, §6), and it retains skipU's
+   one advantage over skipUB (no BlurPool KID penalty) while its p2z, though present
+   (late ~8), is materially better than its γ0.5 sibling's 17.
+4. Practical: gfC at ~46k steps is the current **best single checkpoint source** for the roiD
+   line on combined artifact + realism axes — still RUNNING; screen checkpoints by `val_lat`
+   as usual for the skipU family.
+
+Metrics pulled 2026-07-14 from the MLflow REST API (`metrics/get-history`), matched near step
+43k, late window = mean of the last 10 validation points at pull time (gfC s46.0k, γ0.5
+s52.7k, gfB s163.1k). γ0.5-sibling and gfB numbers are from the same pull, not §6's table.

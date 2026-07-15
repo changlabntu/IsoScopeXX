@@ -67,7 +67,7 @@
 #CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqclean/roiD192/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqclean --lr 0.0002 --netG ed023e --netD patch_16 --tracking_uri thx-MS-384
 
 
-# --- clean-data controls (fixed precrop, thx-MS-384 store; audit doc/audit_precrop_2026-07-09.md) ---
+# --- clean-data controls (fixed precrop, thx-MS-384 store; precrop audit 2026-07-09, doc retired) ---
 # Fresh roiD192 prj paths — never reuse the blurred thx-MS prj dirs. Compare vs the vqclean
 # roiD192 benchmark above at matched optimizer steps.
 
