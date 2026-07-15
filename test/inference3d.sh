@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Inference on val volumes with test/inference.py — run from the repo root.
+# 3D isotropic inference on val volumes with test/inference.py — run from the
+# repo root. (2D VQ-head reconstructions: test/inference2d.sh.)
 # Same convention as run.sh: the last uncommented line is the current focus.
 
 # MSskipE max5skip4, epoch 100 (best val_kid 3.99 in thx-MS)
@@ -22,44 +23,54 @@
 #CUDA_VISIBLE_DEVICES=0 NO_ALBUMENTATIONS_UPDATE=1 python test/inference.py --checkpoint /home/gary/workspace/logs0/THX10SDM20xw/vqcleanVQ/max5skip4 --epoch 600 --source /home/gary/workspace/Data/THX10SDM20xw/val/roiD/th000008003.tif --destination test/out/vqclean_max5skip4_ep600_train
 
 # ---------------------------------------------------------------------------
-# ALL thx10 MS models on the first val volume, train mode (MC dropout, the
-# default — one stochastic draw each). Outputs live under the dataset's out/
-# dir (also the default --destination base in test/inference.py):
-#   out/{tag}/th000008003.tif   raw isotropic output per model
-#   out/summary/{tag}.tif       [XY page z=k | ZX page y=k] concat per model
-#   out/summary/input.tif       same concat of the trilinear-upsampled input
-# MSadv0 note: its experiment dir holds two runs; the vanilla-MS one is the
-# 20260704_011354 timestamp (newer dirs are the MSfpn restart) — pinned below.
-# MSskipUB is the in-progress anti-alias run (epoch 100 snapshot).
+# The thx10-071226 clean gamma-foreground set (EXPERIMENTS.md §1) + vqclean
+# baseline on the first NVOL val volumes, train mode (MC dropout, the default
+# — one stochastic draw each). Outputs live under the dataset's out/ dir (also
+# the default --destination base in test/inference.py):
+#   out/{tag}/{stem}.tif        raw isotropic output per model (384^3), saved
+#                               with --save_zx: ZX page order (page y=k, rows
+#                               Z, cols X — the synthesized axis in-plane)
+#   out/input/{stem}.tif        the trilinear-upsampled inputs, same ZX order
+#                               (model dirs hold outputs only)
+#   out/summary/{tag}.tif       [ZX page y=k | XY page z=k] concat per model —
+#                               FIRST volume only, even when NVOL > 1
+#   out/summary/input.tif       same concat of the first trilinear-upsampled input
+# (concat_views.py pairs each page with its transpose, so ZX-ordered volumes
+# come out ZX in the left panel, XY in the right — swapped vs. XY-ordered.)
+# The three roiD192gf runs train with nm=11g (gamma=0.5, gamma_lo=-0.8 from
+# config.json): inference.py applies the same floor+gamma to the input and by
+# default inverts XupX (and the saved Xup input) back to the pre-gamma [-1,1]
+# scale (--no_invert keeps gamma space) — same logic as test/inference2d.sh.
 set -e
 OUT=/home/gary/workspace/Data/THX10SDM20xw/out
-SRC=/home/gary/workspace/Data/THX10SDM20xw/val/roiD/th000008003.tif
-THX=/home/gary/workspace/logs/THX10SDM20xw/thx10
+SRC=/home/gary/workspace/Data/THX10SDM20xw/val/roiD
+NVOL=20
+THX=/home/gary/workspace/logs/thx10-071226
 
-# vqclean = the non-MS single-VQ baseline (doc/MS_sharpness.md vqclean_ep600).
-# Lives under logs0 and trained on direction roiAdsp4 (not roiD) — cross-direction
-# comparison; inference.py zeroes its unconditional cropz crop after loading.
-TAGS=(MS            MSskip        MSskipE       MSskipEema999 MSskipPband  MSskipPlse   MSskipUB      vqclean)
-EPOCHS=(100         100           100           200           100          100          100           600)
+# Stem of the first val volume — the only one written into out/summary/.
+STEM=$(basename "$(ls "$SRC"/*.tif | head -1)" .tif)
+
+# vqclean caveat: the bundle's vqclean/roiD192 has no .pth (EXPERIMENTS.md §4);
+# the only vqclean with weights is the old logs0 run — nm=00, precrop-bug era,
+# trained on roiAdsp4, not roiD. Provenance-grade comparison only. Its
+# generation() applies cropz unconditionally — inference.py zeroes it on load.
+TAGS=(skipE   skipU   skipUB  vqclean)
+EPOCHS=(300   300     300     600)
 CKPTS=(
-  "$THX/vqcleanM0aMSadv0/Scale4/max5skip4/checkpoints/20260704_011354"
-  "$THX/vqcleanM0aMSskip/Scale4/max5skip4"
-  "$THX/vqcleanM0aMSskipE/Scale4/max5skip4"
-  "$THX/vqcleanM0aMSskipE/Scale4/ema999"
-  "$THX/vqcleanM0aMSskipP/Scale4/band5"
-  "$THX/vqcleanM0aMSskipP/Scale4/lse5"
-  "$THX/vqcleanM0aMSskipUB/Scale4/max5skip4coarse0"
+  "$THX/vqcleanM0aMSskipE/roiD192gf/max5skip4"
+  "$THX/vqcleanM0aMSskipU/roiD192gf/max5skip4"
+  "$THX/vqcleanM0aMSskipUB/roiD192gf/max5skip4"
   "/home/gary/workspace/logs0/THX10SDM20xw/vqcleanVQ/max5skip4"
 )
 
 for i in "${!TAGS[@]}"; do
-  # --save_input on the first model: the trilinear-upsampled input (identical
-  # across models) becomes the summary/input.tif reference.
+  # --save_input on the first model: the trilinear-upsampled inputs (identical
+  # across models) are written once to out/input/ as the shared reference.
   EXTRA=""; [ "$i" -eq 0 ] && EXTRA="--save_input"
   CUDA_VISIBLE_DEVICES=0 NO_ALBUMENTATIONS_UPDATE=1 python test/inference.py \
     --checkpoint "${CKPTS[i]}" --epoch "${EPOCHS[i]}" \
-    --source "$SRC" --destination "$OUT/${TAGS[i]}" $EXTRA
+    --source "$SRC" --limit "$NVOL" --destination "$OUT/${TAGS[i]}" --save_zx $EXTRA
 done
 
-python test/concat_views.py --base "$OUT" --stem th000008003 --tags "${TAGS[@]}" \
-  --input "$OUT/${TAGS[0]}/th000008003_input.tif"
+python test/concat_views.py --base "$OUT" --stem "$STEM" --tags "${TAGS[@]}" \
+  --input "$OUT/input/$STEM.tif"

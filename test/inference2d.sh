@@ -1,27 +1,35 @@
 #!/usr/bin/env bash
 # 2D VQ-autoencoder reconstructions (the per-slice encoder->quantizer->decoder
 # head every model runs before the 3D generator) of the first val volume, for
-# ALL thx10 MS models + the non-MS vqclean baseline. Output size == input size
-# (48x384x384) — this isolates how much detail survives the VQ bottleneck,
-# separately from what the 3D trunk does with it (see test/inference.sh).
+# the thx10-071226 clean gamma-foreground set (EXPERIMENTS.md §1) + the vqclean
+# baseline. Output size == input size (48x384x384) — this isolates how much
+# detail survives the VQ bottleneck, separately from what the 3D trunk does.
+#
+# The three roiD192gf runs train with nm=11g (gamma=0.5, gamma_lo=-0.8 from
+# their config.json): inference2d.py applies the same floor+gamma to the input
+# and by default INVERTS the reconstruction back to the pre-gamma [-1,1] scale
+# (pass --no_invert to keep gamma space). input.tif is saved through the same
+# round trip, so all outputs and the input are directly comparable — up to the
+# noise band below gamma_lo, which the forward clip flattens to -0.8.
+#
+# vqclean caveat: the bundle's vqclean/roiD192 has no .pth (EXPERIMENTS.md §4);
+# the only vqclean with weights is the old logs0 run — nm=00, precrop-bug era,
+# trained on roiAdsp4, not roiD. Provenance-grade comparison only.
+#
 #   out/summary2d/{tag}.tif    slice-wise 2D reconstruction per model
-#   out/summary2d/input.tif    the normalized raw input, same size
-# Run from the repo root. Same checkpoint pins/caveats as test/inference.sh.
+#   out/summary2d/input.tif    the round-tripped raw input, same size
+# Run from the repo root.
 set -e
 OUT=/home/gary/workspace/Data/THX10SDM20xw/out
 SRC=/home/gary/workspace/Data/THX10SDM20xw/val/roiD/th000008003.tif
-THX=/home/gary/workspace/logs/THX10SDM20xw/thx10
+THX=/home/gary/workspace/logs/thx10-071226
 
-TAGS=(MS            MSskip        MSskipE       MSskipEema999 MSskipPband  MSskipPlse   MSskipUB      vqclean)
-EPOCHS=(100         100           100           200           100          100          100           600)
+TAGS=(skipE   skipU   skipUB  vqclean)
+EPOCHS=(300   300     300     600)
 CKPTS=(
-  "$THX/vqcleanM0aMSadv0/Scale4/max5skip4/checkpoints/20260704_011354"
-  "$THX/vqcleanM0aMSskip/Scale4/max5skip4"
-  "$THX/vqcleanM0aMSskipE/Scale4/max5skip4"
-  "$THX/vqcleanM0aMSskipE/Scale4/ema999"
-  "$THX/vqcleanM0aMSskipP/Scale4/band5"
-  "$THX/vqcleanM0aMSskipP/Scale4/lse5"
-  "$THX/vqcleanM0aMSskipUB/Scale4/max5skip4coarse0"
+  "$THX/vqcleanM0aMSskipE/roiD192gf/max5skip4"
+  "$THX/vqcleanM0aMSskipU/roiD192gf/max5skip4"
+  "$THX/vqcleanM0aMSskipUB/roiD192gf/max5skip4"
   "/home/gary/workspace/logs0/THX10SDM20xw/vqcleanVQ/max5skip4"
 )
 

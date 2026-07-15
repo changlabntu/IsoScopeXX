@@ -32,10 +32,13 @@ python test/inference.py \
 ```
 
 `--destination` defaults to `/home/gary/workspace/Data/THX10SDM20xw/out/{experiment
-name}` (`DEFAULT_OUT` in `test/inference.py`). `test/concat_views.py` builds
-per-model `[XY | ZX]` view concats into `out/summary/` (plus `input.tif`, the
-trilinear-upsampled input, as reference) — see the sweep block in
-`test/inference.sh`.
+name}` (`DEFAULT_OUT` in `test/inference.py`). `--save_input` writes the
+trilinear-upsampled input to a shared `input/` dir next to `--destination`
+(model dirs hold outputs only); `--save_zx` saves volumes in ZX page order
+(page y=k, rows Z) instead of XY, putting the synthesized axis in-plane.
+`test/concat_views.py` builds per-model two-panel view concats into
+`out/summary/` (plus `input.tif` as reference) — see the sweep block in
+`test/inference3d.sh` (2D VQ-head reconstructions: `test/inference2d.sh`).
 
 - Generator components run in `.train()` by default (MC dropout: batch-stat BN
   + active dropout, stochastic per run); pass `--eval` for deterministic

@@ -390,6 +390,56 @@ class GAN(BaseModel):
         # so validation without cropz (full z-depth) keeps Xup and XupX the same shape
         self.Xup = F.interpolate(self.oriX, size=self.XupX.shape[2:], mode='trilinear')
 
+    def generation_test(self, x):
+        """Inference-only forward: (B, C, Y, X, Z) -> the full-res isotropic volume
+        (what generation() assigns to self.XupX, i.e. net_g's 'out0').
+
+        Contract (for external patch-inference callers):
+        - `x` is already normalized and at the model's expected Z resolution;
+          none of generation()'s dsp/usp/cropz/tc data-prep is applied here.
+        - Stateless: nothing is stashed on self.
+        - Skips the taming reconstruction decoder (self.decode) — its output
+          (self.reconstructions) is only read by training/validation.
+        - True batch support: Z is folded with B into the 2D encoder batch and
+          unfolded for net_g, whose decode path is batch-agnostic.
+        - Device/dtype/precision are the caller's job (works under .half() +
+          autocast); wrap the call in torch.no_grad()/inference_mode().
+        """
+        assert not self.training, \
+            'generation_test is eval-only (train mode would update BatchNorm running stats)'
+        B, C, Y, X, Z = x.shape
+
+        # Same slice layout as generation()'s input_slice, generalized to B > 1:
+        # for B == 1 this equals oriX.permute(4, 1, 2, 3, 0)[:, :, :, :, 0].
+        slices = x.permute(0, 4, 1, 2, 3).reshape(B * Z, C, Y, X)
+        _, _, _, _, quants = self.encode(slices)
+
+        def to_volume(q):  # (B*Z, C', h, w) -> (B, C', h, w, Z)
+            return q.reshape(B, Z, *q.shape[1:]).permute(0, 2, 3, 4, 1)
+
+        def z_branch(v):  # generation()'s downbranch/resizebranch Z-transforms, batched
+            if self.hparams.downbranch > 1:
+                v = nn.MaxPool3d((1, 1, self.hparams.downbranch))(v)
+            if self.hparams.resizebranch != 1:
+                v = nn.Upsample(scale_factor=(1, 1, self.hparams.resizebranch),
+                                mode='trilinear')(v)
+            return v
+
+        # Trunk: full sum -> Z-transforms -> per-slice conv_in -> back to a 3D volume.
+        quant = z_branch(to_volume(sum(quants)))
+        Bq, Cq, Hq, Wq, Zq = quant.shape  # Zq may differ from Z after z_branch
+        quant = quant.permute(0, 4, 1, 2, 3).reshape(B * Zq, Cq, Hq, Wq)
+        quant = self.decoder.conv_in(quant)
+        quant = quant.reshape(B, Zq, *quant.shape[1:]).permute(0, 2, 3, 4, 1)
+
+        # Lateral injections of the two finest scales, same Z-transforms as the trunk.
+        inject = {}
+        for key, q, conv in (('pre_up2', quants[-2], self.inject_convs[0]),
+                             ('pre_up1', quants[-1], self.inject_convs[1])):
+            inject[key] = conv(z_branch(to_volume(q)))
+
+        return self.net_g(quant, method='decode', inject=inject)['out0']
+
     def get_projection(self, x, depth, how='mean', uprate=None):
         # `uprate` only matters for how='dsp' (defaults to the full-res rate); the coarse
         # heads pass their own halved/quartered rate.

@@ -1,15 +1,17 @@
-"""Concatenate XY and ZX views of inferred volumes for side-by-side inspection.
+"""Concatenate two orthogonal views of inferred volumes for side-by-side inspection.
 
-For each model tag, reads {base}/{tag}/{stem}.tif — a (Z, Y, X) float32 cube
-from test/inference.py — and writes {base}/summary/{tag}.tif where every page
-is [XY plane at z=k | ZX plane at y=k] concatenated horizontally. --input adds
-the trilinear-upsampled input volume (saved by inference.py --save_input) as
-{base}/summary/input.tif for quick comparison.
+For each model tag, reads {base}/{tag}/{stem}.tif — a float32 cube from
+test/inference.py — and writes {base}/summary/{tag}.tif where every page pairs
+the volume's own page k with its page/row-transposed page k, concatenated
+horizontally. For an XY-ordered (Z, Y, X) cube that is [XY at z=k | ZX at y=k];
+for a ZX-ordered cube (inference.py --save_zx) it is [ZX at y=k | XY at z=k].
+--input adds the trilinear-upsampled input volume (saved by inference.py
+--save_input) as {base}/summary/input.tif for quick comparison.
 
-Usage (see test/inference.sh):
+Usage (see test/inference3d.sh):
     python test/concat_views.py --base /home/gary/workspace/Data/THX10SDM20xw/out \
-        --stem th000008003 --tags MS MSskip MSskipE ... \
-        --input /home/gary/workspace/Data/THX10SDM20xw/out/MS/th000008003_input.tif
+        --stem th000008003 --tags skipE skipU skipUB vqclean \
+        --input /home/gary/workspace/Data/THX10SDM20xw/out/input/th000008003.tif
 """
 
 import argparse
