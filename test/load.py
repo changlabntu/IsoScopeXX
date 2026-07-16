@@ -60,13 +60,17 @@ def available_epochs(ckpt_dir):
     return sorted(e for e, comps in by_epoch.items() if comps == names)
 
 
-def load_model(ckpt_dir, epoch=None, device=None):
+def load_model(ckpt_dir, epoch=None, device=None, model_file=None):
     """Rebuild the GAN of a run and load its component weights.
 
     Args:
         ckpt_dir: any path accepted by resolve_checkpoint_dir.
         epoch: checkpoint epoch to load (default: latest complete one).
         device: 'cuda' / 'cpu' (default: cuda if available).
+        model_file: path to a model .py whose GAN class is used INSTEAD of the
+            run's source snapshot — for validating a refactored models/*.py
+            against weights trained with the original code. The class must keep
+            the run's component module names (encoder, quantizers, net_g, ...).
 
     Returns:
         (gan, args): the model in eval mode on `device`, and the run's config.
@@ -85,7 +89,12 @@ def load_model(ckpt_dir, epoch=None, device=None):
 
     # Prefer the snapshot so the code matches the weights even if models/ moved on
     snapshot = os.path.join(ckpt_dir, args.models + '.py')
-    if os.path.isfile(snapshot):
+    if model_file is not None:
+        model_file = os.path.abspath(model_file)
+        print(f'Model source override: {model_file}')
+        GAN = import_model(os.path.dirname(model_file),
+                           os.path.splitext(os.path.basename(model_file))[0]).GAN
+    elif os.path.isfile(snapshot):
         GAN = import_model(ckpt_dir, args.models).GAN
     else:
         GAN = getattr(__import__('models.' + args.models), args.models).GAN

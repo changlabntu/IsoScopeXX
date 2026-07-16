@@ -24,16 +24,20 @@ applies the config's --gamma/--gamma_lo and by default INVERTS outputs back
 to the pre-gamma [-1, 1] scale; --gamma_dec/--gamma_lo_dec re-tone the decode
 only), and --tta/--mc pass pooling with std/maskstd maps (3d and row modes).
 
+Output layout (3d): --destination is the output BASE (default DEFAULT_OUT):
+    {base}/output_3d/{tag}/    mean volumes ({tag} defaults to the experiment name)
+    {base}/input/              shared trilinear-upsampled inputs (--save_input)
+    {base}/output_std/{tag}/   std + maskstd maps (when passes > 1)
+    {base}/summary_3d|_2d|_std/  view concats (test/concat_views.py)
+
 Usage:
     python test/inference.py \
         --checkpoint $LOGS/thx10-071226/vqcleanM0aMSskipU/roiD192gf/max5skip4 \
-        --source /path/to/patches_dir_or_file.tif \
-        --destination /home/gary/workspace/Data/THX10SDM20xw/out/skipU
-    # --destination defaults to {DEFAULT_OUT}/{experiment name}
+        --source /path/to/patches_dir_or_file.tif --tag skipU
     # --dsp 1 to feed a real anisotropic volume as-is (default: config's dsp,
     #   which mimics training by Z-subsampling an isotropic input)
     python test/inference.py --mode 2d --checkpoint ... --source vol.tif \
-        --out out/summary2d/skipU.tif
+        --out out/summary_2d/skipU.tif
     python test/inference.py --mode row --checkpoint ... --source .../aRow \
         --tag skipU
 """
@@ -222,6 +226,10 @@ def build_parser():
     parser.add_argument('--checkpoint', required=True,
                         help='Timestamped checkpoint dir, its checkpoints/ parent, or the experiment root')
     parser.add_argument('--epoch', type=int, default=None, help='Epoch to load (default: latest)')
+    parser.add_argument('--model_file', default=None,
+                        help='Model .py whose GAN class replaces the checkpoint source snapshot '
+                             '(validate a refactored models/*.py against the run\'s weights); '
+                             'must keep the run\'s component module names')
     parser.add_argument('--source', required=True,
                         help='3d: a .tif file or a directory of .tif files; 2d: one .tif; '
                              'row: a directory of thAAABBBCCC.tif patches')
@@ -258,29 +266,31 @@ def build_parser():
                         help='Monte Carlo repeats; combines with --tta (--tta --mc 5 = 10 '
                              'pooled runs). Needs the default train mode to actually vary. '
                              'When total passes > 1, the across-run std is saved (3d: '
-                             'std/{model}/{stem}_std.tif next to --destination; row: '
+                             '{destination}/output_std/{tag}/{stem}_std.tif; row: '
                              '{tag}_std.tif strip). Model-output space, no gamma inversion.')
     parser.add_argument('--std_trd', type=float, default=None,
                         help='Foreground threshold for the pass-agreement mask, in the SAVED '
                              'output intensity scale (mapped through the forward gamma when '
                              "nm='11g' inversion is on). Each pass is binarized at it; the "
                              'mask std sqrt(p*(1-p)) — the uncertain-boundary map — is saved '
-                             'as std/{model}/{stem}_maskstd.tif (row: {tag}_maskstd.tif '
-                             'strip). Needs total passes > 1.')
+                             'as {destination}/output_std/{tag}/{stem}_maskstd.tif (row: '
+                             '{tag}_maskstd.tif strip). Needs total passes > 1.')
     # 3d
     parser.add_argument('--limit', type=int, default=0,
                         help='3d, directory source: only process the first N files, sorted (0 = all)')
     parser.add_argument('--skip', type=int, default=0,
                         help='3d, directory source: skip the first N files before --limit applies')
     parser.add_argument('--destination', default=None,
-                        help=f'3d: output dir (default: {DEFAULT_OUT}/{{experiment name}})')
+                        help=f'3d: output BASE dir (default: {DEFAULT_OUT}); volumes go to '
+                             '{{destination}}/output_3d/{{tag}}, inputs to {{destination}}/input, '
+                             'std maps to {{destination}}/output_std/{{tag}}')
     parser.add_argument('--dsp', type=int, default=None,
                         help="Z-subsample override; 1 = feed anisotropic volume as-is (default: config's --dsp)")
     parser.add_argument('--cropsize', type=int, default=0, help='3d: center-crop Y/X (0 = full)')
     parser.add_argument('--cropz', type=int, default=0, help='3d: center-crop Z before dsp (0 = full)')
     parser.add_argument('--save_input', action='store_true',
-                        help='3d: also save the trilinear-upsampled input as {stem}.tif in an '
-                             'input/ dir next to --destination (model dirs hold outputs only). '
+                        help='3d: also save the trilinear-upsampled input as {stem}.tif in the '
+                             'shared {destination}/input/ dir (model dirs hold outputs only). '
                              "2d: save the round-tripped input as input.tif next to --out")
     parser.add_argument('--save_zx', action='store_true',
                         help='3d: save volumes in ZX page order (page y=k: rows Z, cols X) '
@@ -288,16 +298,19 @@ def build_parser():
                              'synthesized Z axis in-plane for direct inspection')
     # 2d
     parser.add_argument('--out', default=None,
-                        help=f'2d: output .tif path (default: {DEFAULT_OUT}/summary2d/{{experiment name}}.tif)')
-    # row
+                        help=f'2d: output .tif path (default: {DEFAULT_OUT}/summary_2d/{{experiment name}}.tif)')
+    # 3d + row
     parser.add_argument('--tag', default=None,
-                        help='row: output name — patches -> {source}/{tag}/, strip -> {source}/{tag}.tif')
+                        help='Model name in output paths. 3d: {destination}/output_3d/{tag} '
+                             '(default: experiment name); row (required): patches -> '
+                             '{source}/{tag}/, strip -> {source}/{tag}.tif')
     return parser
 
 
 def setup(args):
     """Load the checkpoint and resolve the run's normalization; shared by all modes."""
-    gan, cfg = load_model(args.checkpoint, epoch=args.epoch, device=args.device)
+    gan, cfg = load_model(args.checkpoint, epoch=args.epoch, device=args.device,
+                          model_file=args.model_file)
     device = next(gan.parameters()).device
     if args.train_mode:
         for name in gan.netg_names:
@@ -369,16 +382,18 @@ def run_3d(args, ctx):
     if not files:
         raise FileNotFoundError(f'No .tif files found at {args.source}')
 
-    dest = args.destination or os.path.join(DEFAULT_OUT,
-                                            os.path.basename(args.checkpoint.rstrip('/')))
+    # Layout under the output base (--destination, default DEFAULT_OUT):
+    #   output_3d/{tag}/   mean volumes (kept mean-only for concat_views/perceptual)
+    #   input/             shared trilinear-upsampled inputs (identical across models)
+    #   output_std/{tag}/  std + maskstd maps
+    base = args.destination or DEFAULT_OUT
+    tag = args.tag or os.path.basename(args.checkpoint.rstrip('/'))
+    dest = os.path.join(base, 'output_3d', tag)
     os.makedirs(dest, exist_ok=True)
-    input_dir = os.path.join(os.path.dirname(dest.rstrip('/')) or '.', 'input')
+    input_dir = os.path.join(base, 'input')
     if args.save_input:
         os.makedirs(input_dir, exist_ok=True)
-    # std maps go to a std/{model} dir next to --destination (like input/),
-    # keeping the model dirs mean-outputs-only for concat_views/perceptual.
-    std_dir = os.path.join(os.path.dirname(dest.rstrip('/')) or '.', 'std',
-                           os.path.basename(dest.rstrip('/')))
+    std_dir = os.path.join(base, 'output_std', tag)
     n_passes = max(args.mc, 1) * (2 if args.tta else 1)
     if n_passes > 1:
         os.makedirs(std_dir, exist_ok=True)
@@ -436,7 +451,7 @@ def run_2d(args, ctx):
         print('NOTE: --mode 2d ignores --tta/--mc/--std_trd (the 2D head is deterministic)')
     vol = load_normalized(args.source, ctx)
 
-    out = args.out or os.path.join(DEFAULT_OUT, 'summary2d',
+    out = args.out or os.path.join(DEFAULT_OUT, 'summary_2d',
                                    os.path.basename(args.checkpoint.rstrip('/')) + '.tif')
     os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
 

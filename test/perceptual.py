@@ -17,7 +17,8 @@ Volumes are read per --order: 'zx' (the test/inference3d.sh --save_zx layout:
 page y=k, rows Z, cols X) or 'xy' (page z=k, rows Y, cols X).
 
 Usage:
-    python test/perceptual.py --source /home/gary/workspace/Data/THX10SDM20xw/out/vqclean \
+    python test/perceptual.py \
+        --source /home/gary/workspace/Data/THX10SDM20xw/out/output_3d/vqclean \
         [--metrics fid kid lpips] [--order zx] [--stride 1] [--limit 0]
 """
 

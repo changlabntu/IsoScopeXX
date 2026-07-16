@@ -28,14 +28,14 @@
 # with --tta: each volume is the average of an original and an XY-transposed
 # pass, i.e. two MC draws. Outputs live under the dataset's out/ dir (also
 # the default --destination base in test/inference.py):
-#   out/{tag}/{stem}.tif        raw isotropic output per model (384^3), saved
-#                               with --save_zx: ZX page order (page y=k, rows
-#                               Z, cols X — the synthesized axis in-plane)
+#   out/output_3d/{tag}/{stem}.tif  raw isotropic output per model (384^3),
+#                               saved with --save_zx: ZX page order (page y=k,
+#                               rows Z, cols X — the synthesized axis in-plane)
 #   out/input/{stem}.tif        the trilinear-upsampled inputs, same ZX order
 #                               (model dirs hold outputs only)
-#   out/summary/{tag}.tif       [ZX page y=k | XY page z=k] concat per model —
+#   out/summary_3d/{tag}.tif    [ZX page y=k | XY page z=k] concat per model —
 #                               FIRST volume only, even when NVOL > 1
-#   out/summary/input.tif       same concat of the first trilinear-upsampled input
+#   out/summary_3d/input.tif    same concat of the first trilinear-upsampled input
 # (concat_views.py pairs each page with its transpose, so ZX-ordered volumes
 # come out ZX in the left panel, XY in the right — swapped vs. XY-ordered.)
 # The three roiD192gf runs train with nm=11g (gamma=0.5, gamma_lo=-0.8 from
@@ -48,13 +48,13 @@ SRC=/home/gary/workspace/Data/THX10SDM20xw/val/roiD
 NVOL=20
 THX=/home/gary/workspace/logs/thx10-071226
 
-# Stem of the first val volume — the only one written into out/summary/.
+# Stem of the first val volume — the only one written into out/summary_3d/.
 STEM=$(basename "$(ls "$SRC"/*.tif | head -1)" .tif)
 
 # vqclean is NOT in this sweep: its only weights lived under logs0 (nm=00,
 # precrop-bug era, roiAdsp4 — provenance-grade only even then) and logs0 no
-# longer exists on this box (2026-07-16); out/vqclean/ holds stale July-13
-# outputs that can't be regenerated here.
+# longer exists on this box (2026-07-16); out/output_3d/vqclean/ holds stale
+# July-13 outputs that can't be regenerated here.
 TAGS=(skipE   skipU   skipUB)
 EPOCHS=(300   300     300)
 CKPTS=(
@@ -69,7 +69,7 @@ for i in "${!TAGS[@]}"; do
   EXTRA=""; [ "$i" -eq 0 ] && EXTRA="--save_input"
   CUDA_VISIBLE_DEVICES=0 NO_ALBUMENTATIONS_UPDATE=1 python test/inference.py \
     --checkpoint "${CKPTS[i]}" --epoch "${EPOCHS[i]}" \
-    --source "$SRC" --limit "$NVOL" --destination "$OUT/${TAGS[i]}" --save_zx --tta $EXTRA
+    --source "$SRC" --limit "$NVOL" --destination "$OUT" --tag "${TAGS[i]}" --save_zx --tta $EXTRA
 done
 
 python test/concat_views.py --base "$OUT" --stem "$STEM" --tags "${TAGS[@]}" \

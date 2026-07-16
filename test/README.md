@@ -24,6 +24,14 @@ gan, cfg = load_model('$LOGS/thx10-071226/vqcleanM0aMSskipU/roiD192gf/max5skip4'
 # epoch defaults to the latest complete one.
 ```
 
+`model_file=` (CLI: `--model_file` on `inference.py`) builds the GAN from a
+given models/*.py INSTEAD of the run's snapshot — for validating a refactored
+model file against weights trained with the original code (the class must keep
+the run's component module names). E.g. A/B the same checkpoint with and
+without `--model_file models/MSclean.py` under `--eval` and
+diff the output tifs; expect the difference to be within GPU run-to-run noise
+(~7e-4 for the 384³ skipE output — measure it by rerunning one arm).
+
 ## `test/inference.py` — the inference engine
 
 ```bash
@@ -32,15 +40,16 @@ python test/inference.py --mode 3d|2d|row --checkpoint <run dir> --source ... [f
 
 - **`--mode 3d`** (default): per-file isotropic inference, no stitching. Each
   input `.tif` (page order `Z,Y,X`) is one patch: normalize per the run's
-  `--nm`, run `generation()`, save the isotropic `XupX` as float32 `.tif` into
-  `--destination` (default `{DEFAULT_OUT}/{experiment name}`). `--limit/--skip`
-  subset a directory source; `--save_input` writes the trilinear-upsampled
-  input to a shared `input/` dir next to `--destination` (model dirs hold
-  outputs only); `--save_zx` saves ZX page order (page y=k, rows Z), putting
-  the synthesized axis in-plane.
+  `--nm`, run `generation()`, save the isotropic `XupX` as float32 `.tif`.
+  `--destination` is the output BASE (default `DEFAULT_OUT`); volumes go to
+  `{destination}/output_3d/{tag}` (`--tag` defaults to the experiment name).
+  `--limit/--skip` subset a directory source; `--save_input` writes the
+  trilinear-upsampled input to the shared `{destination}/input/` dir (model
+  dirs hold outputs only); `--save_zx` saves ZX page order (page y=k, rows Z),
+  putting the synthesized axis in-plane.
 - **`--mode 2d`**: slice-wise 2D VQ-head reconstruction (encoder → quantizer →
   decoder only, no 3D trunk, no Z upsampling) of one volume → `--out`
-  (default `{DEFAULT_OUT}/summary2d/{experiment}.tif`). Isolates what survives
+  (default `{DEFAULT_OUT}/summary_2d/{experiment}.tif`). Isolates what survives
   the VQ bottleneck. Ignores `--tta/--mc/--std_trd` (the 2D head is
   deterministic — GroupNorm, dropout 0).
 - **`--mode row`**: a directory of adjacent `thAAABBBCCC.tif` patches forming
@@ -71,12 +80,13 @@ Pass pooling (3d and row modes):
   In the default train mode every pass is an independent MC-dropout draw.
   A steady-state pass costs ~2 s per 384³ output (+~1 s one-time warmup).
 - With more than one pass, the across-run population std is saved to
-  `std/{model}/{stem}_std.tif` next to `--destination` (like `input/`; row
-  mode: the `{tag}_std.tif` strip) — model-output space, uninverted.
+  `{destination}/output_std/{tag}/{stem}_std.tif` (row mode: the
+  `{tag}_std.tif` strip) — model-output space, uninverted.
 - `--std_trd <v>` binarizes every pass at `v` — given in the saved output
   scale, mapped through the forward gamma internally — and saves the mask's
   across-pass std `sqrt(p(1-p))` (p = fraction of passes calling the voxel
-  foreground) as `std/{model}/{stem}_maskstd.tif` (row: `{tag}_maskstd.tif`):
+  foreground) as `{destination}/output_std/{tag}/{stem}_maskstd.tif` (row:
+  `{tag}_maskstd.tif`):
   zero where all passes agree, 0.5 at a 50/50 split, so the nonzero band
   traces the uncertain foreground boundary.
 
@@ -84,9 +94,9 @@ Pass pooling (3d and row modes):
 
 | script | what it sweeps | output |
 |---|---|---|
-| `inference3d.sh` | mean isotropic outputs, first NVOL val volumes, `--tta` | `out/{tag}/`, concats in `out/summary/` |
-| `inferencestd.sh` | boundary uncertainty, first val volume, `--tta --mc 4 --std_trd` | `out/std/{tag}/`, concats in `out/summarystd/` |
-| `inference2d.sh` | 2D VQ-head recon of the first val volume | `out/summary2d/` |
+| `inference3d.sh` | mean isotropic outputs, first NVOL val volumes, `--tta` | `out/output_3d/{tag}/`, concats in `out/summary_3d/` |
+| `inferencestd.sh` | boundary uncertainty, first val volume, `--tta --mc 4 --std_trd` | `out/output_std/{tag}/`, concats in `out/summary_std/` |
+| `inference2d.sh` | 2D VQ-head recon of the first val volume | `out/summary_2d/` |
 
 vqclean is in none of them: its only weights lived under `logs0`, which no
 longer exists on this box (2026-07-16).
@@ -94,8 +104,8 @@ longer exists on this box (2026-07-16).
 ## Support
 
 - `concat_views.py` — per-model two-panel view concats (`[page k | transposed
-  page k]`) into `out/summary/` (or `out/summarystd/` with `--std`, reading
-  the maskstd maps).
+  page k]`) into `out/summary_3d/` (or `out/summary_std/` with `--std`,
+  reading the maskstd maps).
 - `perceptual.py` — offline FID/KID/LPIPS between XY and XZ views of output
   folders, convention-matched to `models/base.py`'s validation metrics
   (taming LPIPS on [-1,1], KID feature=64/subset=16, same uint8 map).

@@ -16,8 +16,8 @@
 # vqclean is NOT in this sweep: its only weights lived under logs0, which no
 # longer exists on this box (2026-07-16).
 #
-#   out/summary2d/{tag}.tif    slice-wise 2D reconstruction per model
-#   out/summary2d/input.tif    the round-tripped raw input, same size
+#   out/summary_2d/{tag}.tif    slice-wise 2D reconstruction per model
+#   out/summary_2d/input.tif    the round-tripped raw input, same size
 # Run from the repo root.
 set -e
 OUT=/home/gary/workspace/Data/THX10SDM20xw/out
@@ -34,9 +34,9 @@ CKPTS=(
 
 for i in "${!TAGS[@]}"; do
   # --save_input on the first model: the round-tripped input (identical across
-  # models) becomes the summary2d/input.tif reference.
+  # models) becomes the summary_2d/input.tif reference.
   EXTRA=""; [ "$i" -eq 0 ] && EXTRA="--save_input"
   CUDA_VISIBLE_DEVICES=0 NO_ALBUMENTATIONS_UPDATE=1 python test/inference.py --mode 2d \
     --checkpoint "${CKPTS[i]}" --epoch "${EPOCHS[i]}" \
-    --source "$SRC" --out "$OUT/summary2d/${TAGS[i]}.tif" $EXTRA
+    --source "$SRC" --out "$OUT/summary_2d/${TAGS[i]}.tif" $EXTRA
 done
