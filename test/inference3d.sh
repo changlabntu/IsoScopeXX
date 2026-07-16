@@ -24,8 +24,9 @@
 
 # ---------------------------------------------------------------------------
 # The thx10-071226 clean gamma-foreground set (EXPERIMENTS.md §1) + vqclean
-# baseline on the first NVOL val volumes, train mode (MC dropout, the default
-# — one stochastic draw each). Outputs live under the dataset's out/ dir (also
+# baseline on the first NVOL val volumes, train mode (MC dropout, the default)
+# with --tta: each volume is the average of an original and an XY-transposed
+# pass, i.e. two MC draws. Outputs live under the dataset's out/ dir (also
 # the default --destination base in test/inference.py):
 #   out/{tag}/{stem}.tif        raw isotropic output per model (384^3), saved
 #                               with --save_zx: ZX page order (page y=k, rows
@@ -50,17 +51,16 @@ THX=/home/gary/workspace/logs/thx10-071226
 # Stem of the first val volume — the only one written into out/summary/.
 STEM=$(basename "$(ls "$SRC"/*.tif | head -1)" .tif)
 
-# vqclean caveat: the bundle's vqclean/roiD192 has no .pth (EXPERIMENTS.md §4);
-# the only vqclean with weights is the old logs0 run — nm=00, precrop-bug era,
-# trained on roiAdsp4, not roiD. Provenance-grade comparison only. Its
-# generation() applies cropz unconditionally — inference.py zeroes it on load.
-TAGS=(skipE   skipU   skipUB  vqclean)
-EPOCHS=(300   300     300     600)
+# vqclean is NOT in this sweep: its only weights lived under logs0 (nm=00,
+# precrop-bug era, roiAdsp4 — provenance-grade only even then) and logs0 no
+# longer exists on this box (2026-07-16); out/vqclean/ holds stale July-13
+# outputs that can't be regenerated here.
+TAGS=(skipE   skipU   skipUB)
+EPOCHS=(300   300     300)
 CKPTS=(
   "$THX/vqcleanM0aMSskipE/roiD192gf/max5skip4"
   "$THX/vqcleanM0aMSskipU/roiD192gf/max5skip4"
   "$THX/vqcleanM0aMSskipUB/roiD192gf/max5skip4"
-  "/home/gary/workspace/logs0/THX10SDM20xw/vqcleanVQ/max5skip4"
 )
 
 for i in "${!TAGS[@]}"; do
@@ -69,7 +69,7 @@ for i in "${!TAGS[@]}"; do
   EXTRA=""; [ "$i" -eq 0 ] && EXTRA="--save_input"
   CUDA_VISIBLE_DEVICES=0 NO_ALBUMENTATIONS_UPDATE=1 python test/inference.py \
     --checkpoint "${CKPTS[i]}" --epoch "${EPOCHS[i]}" \
-    --source "$SRC" --limit "$NVOL" --destination "$OUT/${TAGS[i]}" --save_zx $EXTRA
+    --source "$SRC" --limit "$NVOL" --destination "$OUT/${TAGS[i]}" --save_zx --tta $EXTRA
 done
 
 python test/concat_views.py --base "$OUT" --stem "$STEM" --tags "${TAGS[@]}" \

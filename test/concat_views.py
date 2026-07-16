@@ -8,7 +8,11 @@ for a ZX-ordered cube (inference.py --save_zx) it is [ZX at y=k | XY at z=k].
 --input adds the trilinear-upsampled input volume (saved by inference.py
 --save_input) as {base}/summary/input.tif for quick comparison.
 
-Usage (see test/inference3d.sh):
+--std switches to the uncertainty maps: reads {base}/std/{tag}/{stem}_maskstd.tif
+(inference.py --std_trd) and writes the same two-panel concats to
+{base}/summarystd/{tag}.tif (no input panel — there is no input maskstd).
+
+Usage (see test/inference3d.sh and test/inferencestd.sh):
     python test/concat_views.py --base /home/gary/workspace/Data/THX10SDM20xw/out \
         --stem th000008003 --tags skipE skipU skipUB vqclean \
         --input /home/gary/workspace/Data/THX10SDM20xw/out/input/th000008003.tif
@@ -43,16 +47,20 @@ def main():
     parser.add_argument('--tags', nargs='+', required=True, help='Model tags, in display order')
     parser.add_argument('--input', default=None,
                         help='Trilinear-upsampled input .tif -> {base}/summary/input.tif')
+    parser.add_argument('--std', action='store_true',
+                        help='Concat {base}/std/{tag}/{stem}_maskstd.tif into '
+                             '{base}/summarystd/{tag}.tif instead of the mean outputs')
     args = parser.parse_args()
 
-    dest = os.path.join(args.base, 'summary')
+    dest = os.path.join(args.base, 'summarystd' if args.std else 'summary')
     os.makedirs(dest, exist_ok=True)
 
-    if args.input:
+    if args.input and not args.std:
         write_concat(args.input, os.path.join(dest, 'input.tif'))
     for tag in args.tags:
-        write_concat(os.path.join(args.base, tag, args.stem + '.tif'),
-                     os.path.join(dest, tag + '.tif'))
+        src = (os.path.join(args.base, 'std', tag, args.stem + '_maskstd.tif') if args.std
+               else os.path.join(args.base, tag, args.stem + '.tif'))
+        write_concat(src, os.path.join(dest, tag + '.tif'))
 
 
 if __name__ == '__main__':

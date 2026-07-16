@@ -48,7 +48,7 @@ def main():
     if getattr(cfg, 'nm', '00') in ('11', '11p'):
         vol = vol * 2 - 1
 
-    xupx, _ = infer_volume(gan, vol, device)
+    xupx = infer_volume(gan, vol, device)[0]
 
     import numpy as np
     assert np.isfinite(xupx).all(), 'XupX contains NaN/Inf'
