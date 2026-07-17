@@ -9,8 +9,6 @@ from dotenv import load_dotenv
 from utils.make_config import load_json, save_json
 import json
 import requests
-import mlflow
-from mlflow.system_metrics.system_metrics_monitor import SystemMetricsMonitor
 import yaml
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger, MLFlowLogger
@@ -161,7 +159,7 @@ if __name__ == '__main__':
     )
     mlf_logger = MLFlowLogger(
         experiment_name=args.dataset,
-        run_name=run_timestamp,
+        run_name=args.prj.strip('/').replace('/', '·') + '_' + run_timestamp,
         tracking_uri=tracking_uri,
         artifact_location=artifact_location,
         tags={
@@ -174,14 +172,6 @@ if __name__ == '__main__':
     )
 
     net = GAN(hparams=args, train_loader=train_loader, eval_loader=eval_loader, checkpoints=checkpoints)
-
-    # PL's MLFlowLogger bypasses mlflow.start_run(), so SystemMetricsMonitor must be started manually
-    monitor = None
-    if tracking_uri.startswith("http"):
-        # SystemMetricsMonitor has no tracking_uri arg; it reads the global one
-        mlflow.set_tracking_uri(tracking_uri)
-        monitor = SystemMetricsMonitor(mlf_logger.run_id)
-        monitor.start()
 
     "Please use `Trainer(accelerator='gpu', devices=-1)` instead."
     trainer = pl.Trainer(gpus=-1, strategy='ddp',
@@ -202,7 +192,4 @@ if __name__ == '__main__':
             print("Checkpoints are saved up to the last epoch_save interval.")
             print("TensorBoard logs are not affected.")
         raise
-    finally:
-        if monitor is not None:
-            monitor.finish()
 
