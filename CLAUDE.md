@@ -27,9 +27,8 @@ CUDA_VISIBLE_DEVICES=2 NO_ALBUMENTATIONS_UPDATE=1 python train.py \
 - `--prj` is **required** and names the output subtree; `--env` selects a machine profile from `cfg/env.json` (currently only `brcb`, the primary dev box — add a new profile rather than editing paths when moving machines).
 - Any `train:` key in the YAML can be overridden by a matching CLI flag.
 
-Monitoring:
+Monitoring (MLflow only — the TensorBoard logger was removed):
 ```bash
-tensorboard --logdir $LOGS/{dataset}/{prj}/logs/TensorBoardLogger
 mlflow server --backend-store-uri sqlite:///$LOGS/{name}.db \
   --artifacts-destination $LOGS/{name} --host 0.0.0.0 --port 5002
 ```

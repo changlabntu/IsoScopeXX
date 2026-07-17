@@ -11,7 +11,7 @@ import json
 import requests
 import yaml
 import pytorch_lightning as pl
-from pytorch_lightning.loggers import TensorBoardLogger, MLFlowLogger
+from pytorch_lightning.loggers import MLFlowLogger
 from dataloader.data_multi import PairedImageDataset as Dataset
 from utils.get_args import get_args
 
@@ -89,7 +89,6 @@ if __name__ == '__main__':
     args.git_hash = get_git_hash()
 
     logs_root = os.environ.get('LOGS')
-    log_base = os.path.join(logs_root, args.dataset, args.prj, 'logs')
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     checkpoints = os.path.join(logs_root, args.dataset, args.prj, 'checkpoints', run_timestamp)
     os.makedirs(checkpoints, exist_ok=True)
@@ -152,11 +151,6 @@ if __name__ == '__main__':
         print(f"MLflow: using local SQLite at {local_db}")
         print(f"MLflow: artifacts under {artifact_dir}")
 
-    tb_logger = TensorBoardLogger(
-        save_dir=log_base,
-        name='TensorBoardLogger',
-        version=run_timestamp
-    )
     mlf_logger = MLFlowLogger(
         experiment_name=args.dataset,
         run_name=args.prj.strip('/').replace('/', '·') + '_' + run_timestamp,
@@ -176,8 +170,8 @@ if __name__ == '__main__':
     "Please use `Trainer(accelerator='gpu', devices=-1)` instead."
     trainer = pl.Trainer(gpus=-1, strategy='ddp',
                          max_epochs=args.n_epochs, # progress_bar_refresh_rate=20
-                         logger=[tb_logger, mlf_logger],
-                         enable_checkpointing=True, log_every_n_steps=100,
+                         logger=mlf_logger,
+                         enable_checkpointing=False, log_every_n_steps=100,
                          check_val_every_n_epoch=1, accumulate_grad_batches=2)
     try:
         if eval_loader is not None:
@@ -190,6 +184,5 @@ if __name__ == '__main__':
         if 'mlflow' in str(e).lower():
             print("\nERROR: MLflow Tracking Server disconnected during training.")
             print("Checkpoints are saved up to the last epoch_save interval.")
-            print("TensorBoard logs are not affected.")
         raise
 
