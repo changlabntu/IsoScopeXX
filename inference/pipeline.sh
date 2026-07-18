@@ -40,6 +40,24 @@ CUDA_VISIBLE_DEVICES=1 python inference/decode_stack.py \
 #    Per-patch files (cell mode does not stitch): decode_* and original_* per cell.
 CUDA_VISIBLE_DEVICES=1 python inference/decode_stack.py \
     --codec $OUT/$EXP/codec --tiff $OUT/$EXP/tifs_enh \
-    --what decode --chunk z0098-00128 --cells 10 20 22 31 --orig --batch 2
+    --what decode --chunk z0096-00128 --cells 10 20 22 31 --orig --batch 2
 #    -> $OUT/$EXP/tifs_enh/decode/z0032-0064_r{015..019}c{027..030}.tif   (SR, ZX)
 #       $OUT/$EXP/tifs_enh/original/z0032-0064_r{015..019}c{027..030}.tif (trilinear, ZX)
+
+
+# 4. ENHANCEMENT to ZARR for a selected ROI, with the interpolated original too.
+#    Pick the ROI: --chunk = which z-chunk (32 input slices -> 256 SR slices),
+#    --cells R0 R1 C0 C1 = the X/Y patch block (half-open, patch 256). --crop
+#    sizes the store to the ROI bounding box (origin at the ROI corner), fully
+#    populated -> a small, napari-friendly store (WITHOUT --crop the store is the
+#    whole-volume 334 GB shape written sparsely: single-scale + mostly empty, so
+#    napari crawls). --orig writes the source, TRILINEAR Z-upsampled to the SR
+#    size, into a sibling <zarr>_original.zarr of identical shape, so enhancement
+#    and its interpolated original overlay 1:1. Both are native (z,x,y) OME 0.5.
+ROI_CHUNK=z0064-0096        # <- select z-chunk
+ROI_CELLS="18 21 28 32"     # <- select R0 R1 C0 C1 (rows x cols of the 35x57 grid)
+CUDA_VISIBLE_DEVICES=1 python inference/decode_stack.py \
+    --codec $OUT/$EXP/codec --zarr $OUT/$EXP/enh_roi.zarr \
+    --what decode --chunk $ROI_CHUNK --cells $ROI_CELLS --crop --orig --batch 2
+#    -> $OUT/$EXP/enh_roi.zarr           (isotropic SR enhancement, uint16 z,x,y)
+#       $OUT/$EXP/enh_roi_original.zarr  (trilinear-interpolated original, same shape)

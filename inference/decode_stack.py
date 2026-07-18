@@ -22,6 +22,13 @@ Zarr store (the full zarr -> npz -> zarr round trip; needs the py38zarr env
     reconstruction), writes each decoded patch as an aligned slab, and adds
     an OME-NGFF 0.5 group zarr.json + a decode_params.json. Reruns open the
     same store and fill more of it (--overwrite recreates from scratch).
+    Stores are sparse: an ROI (--cells / --chunk) only writes its chunks. For
+    VIEWING an ROI add --crop: the store is sized to the ROI bounding box
+    (origin at the ROI corner), fully populated — small and napari-friendly,
+    vs the full-volume shape (334 GB logical for sample0) that is single-scale
+    and mostly empty. --orig writes the matched source into a sibling
+    '<zarr>_original' store of the same shape (trilinear Z-upsampled for
+    decode), so an ROI enhancement and its interpolated original overlay 1:1.
 
 TIFF comparison subset (per-patch files, plus a stitched strip for
 --row/--col). Model output lands in {tiff}/{what}/, originals (with --orig) in
@@ -181,17 +188,22 @@ def main():
                              'output per patch plus generator activations)')
     parser.add_argument('--overwrite', action='store_true',
                         help='Recreate the zarr store instead of filling an existing one')
+    parser.add_argument('--crop', action='store_true',
+                        help='Zarr: size the store to the ROI bounding box (origin at the ROI '
+                             'corner), fully populated, instead of the full-volume shape written '
+                             'sparsely — a small, napari-friendly store for viewing an ROI. The '
+                             'ROI offset is recorded in decode_params.json. Default (no --crop) '
+                             'keeps the full-volume placement for a whole-volume decode.')
     parser.add_argument('--orig', action='store_true',
                         help="Also emit the source patch(es) from the codec's recorded source "
-                             'store for side-by-side comparison, in the same view as --what: '
-                             'reconstruction -> raw input-res XY pages; decode -> trilinear '
-                             'Z-upsampled to the SR size as ZX pages (blocky-Z vs the smooth '
-                             'enhancement). Needs --tiff; zarr source only.')
+                             'store for side-by-side comparison, matched to --what: '
+                             'reconstruction -> raw input-res; decode -> TRILINEAR Z-upsampled '
+                             'to the SR size (blocky-Z vs the smooth enhancement). Goes to the '
+                             "TIFF original/ subfolder and/or a sibling '<zarr>_original' store "
+                             'at the same shape. Zarr source only.')
     args = parser.parse_args()
     if args.zarr is None and args.tiff is None:
         parser.error('pick at least one output: --zarr and/or --tiff')
-    if args.orig and args.tiff is None:
-        parser.error('--orig writes TIFFs — pass --tiff DIR')
 
     root, names, all_names = resolve_chunks(args.codec, args.chunk)
     with open(os.path.join(root, names[0], 'norm_params.json')) as f:
@@ -220,38 +232,58 @@ def main():
           f'{len(cells)} cell(s) each  (model {model} epoch {epoch}, '
           f'{"mc" if args.mc else "eval"}, device {eng.device})')
 
-    arr = None
-    if args.zarr:
-        from inference.zarr_io import create_zarr, write_ome_group
+    # Store geometry. Default: full-volume shape, patches placed at absolute
+    # coords (offset 0), written sparsely. --crop: shape = ROI bounding box in
+    # (z, x=cols, y=rows), patches placed relative to the ROI corner (off_*).
+    if args.crop:
+        r_idx = [r for r, _ in cells]
+        c_idx = [c for _, c in cells]
+        za_min = min(chunk_z_range(n)[0] for n in names)
+        zb_max = max(chunk_z_range(n)[1] for n in names)
+        off_z, off_x, off_y = za_min * up, min(c_idx) * patch, min(r_idx) * patch
+        shape = ((zb_max - za_min) * up,
+                 (max(c_idx) - min(c_idx) + 1) * patch,
+                 (max(r_idx) - min(r_idx) + 1) * patch)
+    else:
+        off_z = off_x = off_y = 0
         shape = (z_full * up, W, H)
-        store_chunks = (np0['n_slices'] * up, patch, patch)  # = one decoded slab
-        arr = create_zarr(os.path.join(args.zarr, '0'), shape, store_chunks,
-                          overwrite=args.overwrite)
-        write_ome_group(args.zarr, name=os.path.basename(args.zarr.rstrip('/')))
-        with open(os.path.join(args.zarr, 'decode_params.json'), 'w') as f:
-            json.dump(dict(what=args.what, codec=root, chunks=names, model=model,
+    store_chunks = (min(np0['n_slices'] * up, shape[0]), patch, patch)  # = one decoded slab
+
+    def make_store(path, what):
+        from inference.zarr_io import create_zarr, write_ome_group
+        a = create_zarr(os.path.join(path, '0'), shape, store_chunks, overwrite=args.overwrite)
+        write_ome_group(path, name=os.path.basename(path.rstrip('/')))
+        with open(os.path.join(path, 'decode_params.json'), 'w') as f:
+            json.dump(dict(what=what, codec=root, chunks=names, model=model,
                            epoch=epoch, mc=args.mc, half=args.half, uprate=up,
-                           patch=patch, shape_zxy=list(shape),
-                           store_chunks=list(store_chunks),
-                           window_lo=np0['window_lo'], window_hi=np0['window_hi']),
-                      f, indent=2)
-        print(f'zarr store {args.zarr}: shape (z, x, y) = {shape}, '
-              f'chunks {store_chunks}, uint16')
+                           patch=patch, shape_zxy=list(shape), store_chunks=list(store_chunks),
+                           crop=args.crop, roi_offset_zxy=[off_z, off_x, off_y],
+                           window_lo=np0['window_lo'], window_hi=np0['window_hi']), f, indent=2)
+        print(f'zarr store {path}: shape (z, x, y) = {shape}, chunks {store_chunks}, uint16'
+              + (f', ROI offset (z,x,y) = ({off_z}, {off_x}, {off_y})' if args.crop else ''))
+        return a
+
+    arr = make_store(args.zarr, args.what) if args.zarr else None
+
     out_dir = orig_dir = None
     if args.tiff:
         out_dir = os.path.join(args.tiff, args.what)      # decode/ or reconstruction/
         orig_dir = os.path.join(args.tiff, 'original')
         os.makedirs(out_dir, exist_ok=True)
 
-    src_arr = None
+    src_arr = orig_arr = None
     if args.orig:
         if 'zarr_level' not in np0:
             parser.error('--orig supports a zarr source only (this codec was encoded '
                          f"from {np0.get('source')})")
         from inference.zarr_io import open_zarr
         src_arr = open_zarr(np0['source'], np0['zarr_level'])
-        os.makedirs(orig_dir, exist_ok=True)
         print(f'original source: {np0["source"]} level {np0["zarr_level"]}')
+        if orig_dir is not None:
+            os.makedirs(orig_dir, exist_ok=True)
+        if args.zarr:                       # sibling '<zarr>_original' store, same shape
+            base, ext = os.path.splitext(args.zarr.rstrip('/'))
+            orig_arr = make_store(base + '_original' + ext, args.what + '_original')
 
     # Original comparison view follows --what: reconstruction -> raw input-res
     # XY pages; decode -> trilinear Z-upsampled ZX pages, matching the SR output.
@@ -294,11 +326,11 @@ def main():
                                    f'expected {(patch, patch, z_out)} — check uprate')
             for b, (r, c) in enumerate(batch):
                 u16 = restore_uint16(eng, out[b, 0], lo, hi)     # (Y, X, Z')
+                zc0, xc0, yc0 = za * up - off_z, c * patch - off_x, r * patch - off_y
                 if arr is not None:
                     slab = np.ascontiguousarray(u16.transpose(2, 1, 0))  # (z, x, y)
-                    futs.append(arr[za * up:za * up + z_out,
-                                    c * patch:(c + 1) * patch,
-                                    r * patch:(r + 1) * patch].write(slab))
+                    futs.append(arr[zc0:zc0 + z_out, xc0:xc0 + patch,
+                                    yc0:yc0 + patch].write(slab))
                     while len(futs) > 8:
                         futs.pop(0).result()
                 if args.tiff:
@@ -308,10 +340,16 @@ def main():
                     strip.append(u16)
                 if src_arr is not None:
                     ocmp = read_orig(r, c, za, zb, z_out)         # (Y, X, Z') matching --what
-                    if not is_strip:
+                    if orig_arr is not None:
+                        oslab = np.ascontiguousarray(ocmp.transpose(2, 1, 0))  # (z, x, y)
+                        futs.append(orig_arr[zc0:zc0 + z_out, xc0:xc0 + patch,
+                                             yc0:yc0 + patch].write(oslab))
+                        while len(futs) > 8:
+                            futs.pop(0).result()
+                    if args.tiff and not is_strip:
                         tiff.imwrite(os.path.join(
                             orig_dir, f'{chunk}_r{r:03d}c{c:03d}.tif'), orig_pages(ocmp))
-                    else:
+                    elif is_strip:
                         orig_strip.append(ocmp)
             done = i + len(batch)
             if done % (args.batch * 10) < args.batch or done == len(cells):
@@ -338,7 +376,11 @@ def main():
                       f'pages, range [{ovol.min()}, {ovol.max()}]')
     for f in futs:
         f.result()
-    print('done -> ' + ' + '.join(p for p in (args.zarr, args.tiff) if p))
+    outs = [args.zarr, args.tiff]
+    if orig_arr is not None:
+        outs.append(os.path.splitext(args.zarr.rstrip('/'))[0] + '_original'
+                    + os.path.splitext(args.zarr.rstrip('/'))[1])
+    print('done -> ' + ' + '.join(p for p in outs if p))
 
 
 if __name__ == '__main__':
