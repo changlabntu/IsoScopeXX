@@ -106,3 +106,43 @@ Per dir: `original/corrupted.npy`, `gt_transforms.json` (perturb) →
 Sanity: synthetic self-tests (warp/compose/phase-corr/graph-solve, end-to-end
 0.045 px); identity run (`perturb --rot 0 --trans 0 --scale 0`) measures each
 feature's content-change bias floor — rerun when touching the loss.
+
+## Enhanced-volume comparison: latent-space registration → decode
+
+Closes the caveat above ("decoded-isotropic-volume smoothness not yet
+tested"), and tests a NEW way of applying the recovered transforms. Old way:
+the latent only *estimates* `M_z`, which is then applied to the **pixels**
+(`register.py` → `registered_latent.npy`). New way (`enhance.py
+--transforms`): encode the corrupted stack once, warp each per-scale latent
+plane by `M_z⁻¹` directly **in latent space** (translation ÷ 8;
+rotation/scale are resolution-independent in `affine.py`'s centered
+convention), then decode the registered 3D latent straight through `net_g`
+into the 8× Z-super-resolved volume — registration and enhancement without
+ever warping (or needing) the pixel stack. Both ways reuse the same
+`recovered_latent.json`, so the comparison isolates *where* the warp happens.
+
+```bash
+python registration/enhance.py --dir $OUT/registration/full1024 --stack corrupted.npy --self_test
+python registration/enhance.py --dir $OUT/registration/full1024 --stack original.npy          --out original_enh
+python registration/enhance.py --dir $OUT/registration/full1024 --stack corrupted.npy         --out corrupted_enh
+python registration/enhance.py --dir $OUT/registration/full1024 --stack registered_latent.npy --out registered_latent_enh
+python registration/enhance.py --dir $OUT/registration/full1024 --stack corrupted.npy \
+    --transforms recovered_latent.json --out latentreg_enh     # NEW way
+python registration/evaluate_enhanced.py --dir $OUT/registration/full1024
+```
+
+All four volumes go through the identical encode → tiled-decode path
+(full-res per-slice encode, 32²-latent × 24-Z tiles → 256²×192 out,
+deterministic `train_mode=False`), so tiling seams (X/Y multiples of 256, Z
+multiples of 192) are a shared constant. Outputs under `{dir}/enhanced/`:
+`{original,corrupted,registered_latent,latentreg}_enh.npy` (960×1024×1024
+float16, pre-gamma [-1,1]) + per-run settings json, `metrics_enhanced.csv`,
+`reslice_enhanced{,_zoom}.png` (6 columns: original/corrupted trilinear +
+the four enhanced; reference = `original_enh`).
+
+Notes: a bilinear latent warp stays in-distribution for the decoder
+(`encode()` itself bilinearly upsamples coarse code planes), but the encoder
+only approximately commutes with rotation/subpixel shift — that gap is what
+this comparison measures. Latent 0 is not background (`--fill background`
+encodes a constant −1 slice instead); overlap-blended decoding to hide tile
+seams is future work.
