@@ -187,6 +187,135 @@ class GAN(BaseModel):
     def get_xy_plane(self, x):
         return x.permute(4, 1, 2, 3, 0)[::1, :, :, :, 0]
 
+    # Volumes are (B, C, Y, X, Z) — the repo-wide layout (dim4 = Z, the
+    # anisotropic axis). Same helpers as models/MSclean.py: the 2D VQ stack
+    # runs on XY-slice batches with Z folded into the batch dimension. Used by
+    # the stateless inference path only; generation() keeps its historical
+    # batch-1 permutes.
+
+    @staticmethod
+    def vol_to_slices(v):
+        """(B, C, Y, X, Z) volume -> (B*Z, C, Y, X) XY-slice batch."""
+        B, C, Y, X, Z = v.shape
+        return v.permute(0, 4, 1, 2, 3).reshape(B * Z, C, Y, X)
+
+    @staticmethod
+    def slices_to_vol(s, batch_size=1):
+        """(B*Z, C, H, W) slice batch -> (B, C, H, W, Z) volume."""
+        BZ, C, H, W = s.shape
+        return s.reshape(batch_size, BZ // batch_size, C, H, W).permute(0, 2, 3, 4, 1)
+
+    def _z_transform(self, v):
+        """Optional latent-Z reshaping (--downbranch / --resizebranch) on a
+        (B, C, H, W, Z) volume before it enters net_g."""
+        if self.hparams.downbranch > 1:
+            v = nn.MaxPool3d((1, 1, self.hparams.downbranch))(v)
+        if self.hparams.resizebranch != 1:
+            v = nn.Upsample(scale_factor=(1, 1, self.hparams.resizebranch),
+                            mode='trilinear')(v)
+        return v
+
+    def _netg_decode_single(self, latent_slices, batch_size):
+        """Batched twin of generation() lines 233-246 (bit-identical for B=1).
+
+        In:  latent_slices — (B*Z, embed_dim, H, W) post-quantize latent. Feeding
+             it to decoder.conv_in works because embed_dim == z_channels in the
+             ldm yaml (4 == 4 for vqgan.yaml) — the same coupling generation()
+             relies on.
+        Out: (B, 1, Y', X', Z') isotropic volume, net_g's 'out0'.
+        """
+        v = self._z_transform(self.slices_to_vol(latent_slices, batch_size))
+        trunk = self.slices_to_vol(self.decoder.conv_in(self.vol_to_slices(v)),
+                                   batch_size)
+        return self.net_g(trunk, method='decode')['out0']
+
+    def generation_test(self, x, method='full'):
+        """Stateless inference API — same staged contract as models/MSclean.py,
+        with single-scale length-1 lists so callers (inference.Engine) never
+        branch on model type.
+
+        method='full' (default): x = (B, C, Y, X, Z) normalized volume
+            -> the full-res isotropic volume (what generation() assigns to
+            self.XupX, i.e. net_g's 'out0'). Equals 'encode' then 'decode'.
+        method='encode': x = (B, C, Y, X, Z) volume -> (scale_latents, indices):
+            scale_latents — [ (B, embed_dim, H, W, Z) ], the post-quantize
+                latent (pre post_quant_conv — what BOTH downstream paths eat);
+            indices — [ (B, Z, H, W) int64 codebook indices ] (Zarr-storable;
+                rebuild the latent exactly with latents_from_indices), or None
+                under --vae (no codebook; latent is posterior.mode()).
+        method='decode': x = scale_latents list -> the 3D isotropic volume
+            (B, 1, Y', X', Z') via decoder.conv_in + net_g.
+        method='reconstruction': x = scale_latents list -> the slice-wise 2D
+            VQ-head reconstruction (post_quant_conv + decoder) as a
+            (B, out_ch, Y, X, Z) volume — no net_g, no Z upsampling (what
+            training keeps as self.reconstructions).
+
+        Contract (all methods): inputs already normalized and at the model's
+        expected Z resolution (no dsp/usp/cropz prep); stateless; batched (Z
+        folded with B into the 2D batches); device/dtype are the caller's job;
+        wrap calls in torch.no_grad()/inference_mode().
+
+        Note --vae 'full' uses the deterministic posterior.mode(), unlike
+        generation()'s posterior.sample() — only the VQ branch bit-matches
+        generation().
+        """
+        assert not self.training, \
+            'generation_test is eval-only (train mode would update BatchNorm running stats)'
+
+        if method in ('full', 'encode'):
+            B = x.shape[0]
+            slices = self.vol_to_slices(x)
+            if self.use_vae:
+                posterior, _, _, _, _ = self.encode(slices)
+                latent_slices = posterior.mode()
+                raw_indices = None
+            else:
+                quant, _, info, _, _ = self.encode(slices)
+                latent_slices = quant
+                raw_indices = info[2]
+            if method == 'full':
+                return self._netg_decode_single(latent_slices, batch_size=B)
+            H, W = latent_slices.shape[-2:]
+            Z = latent_slices.shape[0] // B
+            scale_latents = [self.slices_to_vol(latent_slices, B)]
+            # reshape works for every quantizer index layout (flat, (N,1) with
+            # remap, or (N, H, W) with --sane_index_shape)
+            indices = None if raw_indices is None else [raw_indices.reshape(B, Z, H, W)]
+            return scale_latents, indices
+
+        if method == 'decode':
+            B = x[0].shape[0]
+            return self._netg_decode_single(self.vol_to_slices(x[0]), batch_size=B)
+
+        if method == 'reconstruction':
+            B = x[0].shape[0]
+            recon = self.decode(self.vol_to_slices(x[0]))
+            return self.slices_to_vol(recon, B)
+
+        raise ValueError(f"generation_test: unknown method '{method}'")
+
+    def latents_from_indices(self, indices):
+        """Rebuild generation_test(method='encode')'s scale_latents from stored
+        codebook indices — the decode side of the compression path (no encoder
+        run needed).
+
+        In:  indices — [ (B, Z, H, W) int64 ] (length-1 list).
+        Out: scale_latents — [ (B, embed_dim, H, W, Z) ]. Unlike MSclean there
+             is no post_quant_conv here: vqclean's stored latent is the raw
+             quantized code (post_quant_conv is applied inside decode() for
+             reconstruction, decoder.conv_in for the net_g path). Differs from
+             the encode-path latent only by straight-through round-off (~1e-7:
+             encode carries z + (z_q - z).detach(), this path the exact z_q).
+        """
+        assert not self.training, 'latents_from_indices is eval-only'
+        if self.use_vae:
+            raise RuntimeError('latents_from_indices needs a VQ codebook; this run is --vae')
+        idx = indices[0]
+        B, Z, H, W = idx.shape
+        code = self.quantize.get_codebook_entry(
+            idx.reshape(-1), shape=(B * Z, H, W, self.embed_dim))
+        return [self.slices_to_vol(code, B)]
+
     def generation(self, batch, deterministic=False):
         # cropz is a training-time crop only (gated on self.training, as in the MS
         # family) — previously unconditional, which silently truncated full-depth
