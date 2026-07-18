@@ -2,30 +2,49 @@
 
     python inference/latent_tsne.py --codec /home/cheese/workspace/Output/skipU300/codec
 
-Gathers every {stem}.npz written by inference/inference_latent.py in --codec,
-turns each patch's codec into a bag-of-codes feature (per-scale histogram of
-codebook usage, L1-normalized, concatenated over scales), then:
-  - PCA -> t-SNE to 2D, scatter plot saved as {out_dir}/tsne.png
+Gathers every {stem}.npz written by inference/inference_latent.py (or
+encode_stack.py) in --codec, turns each patch's codec into a feature (see
+--feat below), then:
+  - PCA -> t-SNE to 2D, scatter plot saved as {out_dir}/tsne{_feat}.png
   - IsolationForest on the PCA features flags anomalous patches (fraction
     set by --contamination), drawn in red and labeled on the plot
-  - {out_dir}/anomalies.csv lists the flagged patch names with their anomaly
-    score (most anomalous first) and t-SNE coordinates
+  - {out_dir}/anomalies{_feat}.csv lists the flagged patch names with their
+    anomaly score (most anomalous first) and t-SNE coordinates
   - when all stems are AAABBBCCC patch indices (AAA=Y, BBB=X, CCC=Z), a
-    second figure {out_dir}/tsne_grid.png colors the same embedding by grid
-    position: one RGB=(Y,X,Z) panel and one viridis panel per axis
-  - with --thumbs <raw data dir>, a paper-style figure {out_dir}/tsne_thumbs.png
-    annotates ~--n_thumbs dots (spread by farthest-point sampling, anomalies
-    included) with downsampled Z-MIP thumbnails of the corresponding volumes
+    second figure {out_dir}/tsne_grid{_feat}.png colors the same embedding by
+    grid position: one RGB=(Y,X,Z) panel and one viridis panel per axis
+  - with --thumbs <raw data dir>, a paper-style figure
+    {out_dir}/tsne_thumbs{_feat}.png annotates ~--n_thumbs dots (spread by
+    farthest-point sampling, anomalies included) with downsampled Z-MIP
+    thumbnails of the corresponding volumes
 
-out_dir defaults to the codec folder's parent (the experiment dir). Pure
-CPU/sklearn — no model, no GPU.
+Features (--feat): 'hist' (default) is the bag-of-codes histogram (per-scale
+codebook usage, L1-normalized, concatenated); 'hist_std'/'tfidf'/'hist_bal'
+reweight it (see transform_hist); 'latent' rebuilds the continuous quantized
+latent from the stored indices and pools it (see load_latent_features). The
+hist* features are pure CPU/sklearn; 'latent' loads the model (GPU).
+
+WHAT WORKS: the '--feat latent' embedding (e.g. --zpool mean) is the one that
+maps to real image content — overlaying its IsolationForest anomalies back
+onto a raw slice (inference/latent_tsne overlay, e.g. anomalies_overlay_*.png)
+lands the red patches on genuine structure (edges/voids/inclusions), whereas
+the bag-of-codes 'hist' embedding is near-1D (PC1 ~0.93) and background-code
+dominated, so it separates only gross outliers. Prefer --feat latent for
+structure-aware maps; the hist variants stay for cheap, model-free triage.
+
+out_dir defaults to the codec folder's parent (the experiment dir).
 """
 
 import argparse
 import csv
 import os
 import re
+import sys
 from glob import glob
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 import matplotlib
 matplotlib.use('Agg')
@@ -34,7 +53,9 @@ import numpy as np  # noqa: E402
 
 
 def load_features(codec_dir):
-    """(stems, features): per-patch concatenated per-scale code histograms."""
+    """(stems, features, blocks): per-patch concatenated per-scale code
+    histograms. blocks = the (start, end) column range of each scale in the
+    concatenated feature (so a caller can reweight scales independently)."""
     files = sorted(glob(os.path.join(codec_dir, '*.npz')))
     if not files:
         raise FileNotFoundError(f'No .npz codecs in {codec_dir}')
@@ -47,20 +68,121 @@ def load_features(codec_dir):
         stems.append(os.path.splitext(os.path.basename(f))[0])
         for k, key in enumerate(scales):
             per_scale[k].append(z[key].ravel())
-    feats = []
+    feats, blocks, start = [], [], 0
     for idx_lists in per_scale:
         n_codes = int(max(a.max() for a in idx_lists)) + 1
         hist = np.stack([np.bincount(a, minlength=n_codes) for a in idx_lists]).astype(np.float64)
         feats.append(hist / hist.sum(axis=1, keepdims=True))  # L1 per scale
-    return stems, np.concatenate(feats, axis=1)
+        blocks.append((start, start + n_codes))
+        start += n_codes
+    return stems, np.concatenate(feats, axis=1), blocks
+
+
+def balance_scales(F, blocks):
+    """Rescale each scale block to equal total variance, so all scales weigh
+    equally in the (Euclidean/PCA) embedding — unlike L1-per-scale (coarse,
+    spiky scales dominate the magnitude) or per-column z-score (the scale with
+    the most codes dominates)."""
+    F = F.copy()
+    for s, e in blocks:
+        v = F[:, s:e].var(0).sum()
+        if v > 0:
+            F[:, s:e] /= np.sqrt(v)
+    return F
+
+
+def transform_hist(F, feat, blocks=None):
+    """Reweight the bag-of-codes histogram to counter its ~1D, background-code
+    dominance (raw PC1 ~0.93 on sample0): 'hist_std' z-scores each code column,
+    'tfidf' down-weights codes common across patches, 'hist_bal' rescales each
+    scale block to equal variance (all 4 scales equally important).
+    'hist' = untouched."""
+    if feat == 'hist':
+        return F
+    if feat == 'hist_std':
+        return (F - F.mean(0)) / (F.std(0) + 1e-9)
+    if feat == 'tfidf':
+        idf = np.log(len(F) / ((F > 0).sum(0) + 1))
+        return F * idf
+    if feat == 'hist_bal':
+        return balance_scales(F, blocks)
+    raise ValueError(f"unknown hist transform '{feat}'")
+
+
+def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
+                         model=None, epoch=None, device=None, half=False):
+    """Continuous latent features: rebuild each patch's quantized latent from
+    the stored indices (Engine.latents_from_indices, no re-encode), pool over Z
+    (max mirrors the MIP thumbnail; mean is smoother), then adaptive-pool the
+    H x W plane to a spatial x spatial grid and flatten. Unlike the bag-of-codes
+    histogram this lives in a metric space (similar textures -> near vectors)
+    and keeps coarse spatial arrangement.
+
+    per_scale=False sums the scales into one latent (one feature block);
+    per_scale=True pools each scale separately and concatenates them, returning
+    per-scale blocks so the caller can weigh scales equally. Returns
+    (stems, features, blocks)."""
+    import json
+    import torch
+    import torch.nn.functional as Fnn
+    from inference import Engine
+    if model is None:
+        model = json.load(open(os.path.join(codec_dir, 'norm_params.json')))['model']
+    eng = Engine.from_registry(model, epoch=epoch, device=device)
+    if half:
+        eng.gan.half()
+    files = sorted(glob(os.path.join(codec_dir, '*.npz')))
+    if not files:
+        raise FileNotFoundError(f'No .npz codecs in {codec_dir}')
+    zp = (lambda t: t.amax(-1)) if zpool == 'max' else (lambda t: t.mean(-1))
+
+    def pool(vol):                                        # (1, C, H, W, Z) -> flat (C*s*s,)
+        p = Fnn.adaptive_avg_pool2d(zp(vol.float())[0], (spatial, spatial))
+        return p.flatten().cpu().numpy()
+
+    stems, feats, n_scales = [], [], None
+    for f in files:
+        z = np.load(f)
+        scales = sorted((k for k in z.files if k.startswith('scale_')),
+                        key=lambda k: int(k.split('_')[1]))
+        idx = [torch.from_numpy(z[k].astype(np.int64)).to(eng.device) for k in scales]
+        lat = eng.latents_from_indices(idx)              # list of (1, C, H, W, Z)
+        n_scales = len(lat)
+        feats.append(np.concatenate([pool(L) for L in lat]) if per_scale
+                     else pool(sum(lat)))
+        stems.append(os.path.splitext(os.path.basename(f))[0])
+    feats = np.stack(feats)
+    if per_scale:
+        d = feats.shape[1] // n_scales                   # each scale block same width
+        blocks = [(k * d, (k + 1) * d) for k in range(n_scales)]
+    else:
+        blocks = [(0, feats.shape[1])]
+    return stems, feats, blocks
+
+
+def build_features(args):
+    """(stems, feature_matrix, label) for the requested --feat."""
+    if args.feat == 'latent':
+        stems, feats, blocks = load_latent_features(
+            args.codec, zpool=args.zpool, spatial=args.spatial,
+            per_scale=args.balance_scales, model=args.model, epoch=args.epoch,
+            device=args.device, half=args.half)
+        if args.balance_scales:
+            return stems, balance_scales(feats, blocks), f'latent_{args.zpool}_bal'
+        return stems, feats, f'latent_{args.zpool}'
+    stems, hist, blocks = load_features(args.codec)
+    return stems, transform_hist(hist, args.feat, blocks), args.feat
 
 
 def run(codec, out_dir=None, contamination=0.05, perplexity=30.0, pca=50,
-        seed=0, thumbs=None, n_thumbs=24, thumb_px=56):
+        seed=0, thumbs=None, n_thumbs=24, thumb_px=56, feat='hist', zpool='max',
+        spatial=8, model=None, epoch=None, device=None, half=False, balance_scales=False):
     """The whole pipeline as a callable (used by encode_stack.py --tsne)."""
     args = argparse.Namespace(codec=codec, out_dir=out_dir, contamination=contamination,
                               perplexity=perplexity, pca=pca, seed=seed, thumbs=thumbs,
-                              n_thumbs=n_thumbs, thumb_px=thumb_px)
+                              n_thumbs=n_thumbs, thumb_px=thumb_px, feat=feat, zpool=zpool,
+                              spatial=spatial, model=model, epoch=epoch, device=device, half=half,
+                              balance_scales=balance_scales)
     _run(args)
 
 
@@ -82,6 +204,25 @@ def main():
                         help='How many dots get a thumbnail (default 24)')
     parser.add_argument('--thumb_px', type=int, default=56,
                         help='Thumbnail size in pixels after downsampling the MIP (default 56)')
+    parser.add_argument('--feat', choices=('hist', 'hist_std', 'tfidf', 'hist_bal', 'latent'),
+                        default='hist',
+                        help='Feature: hist = bag-of-codes histogram (default); hist_std = '
+                             'column-standardized; tfidf = down-weight common codes; hist_bal = '
+                             'equal variance per scale (all 4 scales weigh equally); latent = '
+                             'continuous Z-pooled latent (needs the model). Non-hist writes '
+                             'suffixed outputs (tsne_<feat>.png).')
+    parser.add_argument('--balance_scales', action='store_true',
+                        help='latent feat: pool each scale separately and rescale to equal '
+                             'variance (all scales weigh equally) instead of summing them')
+    parser.add_argument('--zpool', choices=('mean', 'max'), default='max',
+                        help='latent feat: pool the latent over Z (default max, mirrors the MIP thumbnail)')
+    parser.add_argument('--spatial', type=int, default=8,
+                        help='latent feat: adaptive-pool the H x W plane to this grid (default 8)')
+    parser.add_argument('--model', default=None,
+                        help="latent feat: model name (default: codec's norm_params.json)")
+    parser.add_argument('--epoch', type=int, default=None, help='latent feat: model epoch override')
+    parser.add_argument('--device', default=None, help='latent feat: cuda / cpu')
+    parser.add_argument('--half', action='store_true', help='latent feat: run the model in fp16')
     _run(parser.parse_args())
 
 
@@ -93,9 +234,10 @@ def _run(args):
     out_dir = args.out_dir or os.path.dirname(os.path.abspath(args.codec).rstrip('/'))
     os.makedirs(out_dir, exist_ok=True)
 
-    stems, feats = load_features(args.codec)
+    stems, feats, label = build_features(args)
+    suffix = '' if label == 'hist' else '_' + label      # keep legacy tsne.png for hist
     n = len(stems)
-    print(f'{n} codecs from {args.codec}, feature dim {feats.shape[1]}')
+    print(f'{n} codecs from {args.codec}, feat={label}, dim {feats.shape[1]}')
 
     n_pca = min(args.pca, n - 1, feats.shape[1])
     X = PCA(n_components=n_pca, random_state=args.seed).fit_transform(feats)
@@ -116,12 +258,12 @@ def _run(args):
     for i in np.where(flags)[0]:
         ax.annotate(stems[i], (emb[i, 0], emb[i, 1]), fontsize=6, color='darkred',
                     xytext=(3, 3), textcoords='offset points')
-    ax.set_title(f't-SNE of codec code-usage histograms — {os.path.basename(out_dir)} '
+    ax.set_title(f't-SNE [{label}] — {os.path.basename(out_dir)} '
                  f'(n={n}, contamination={args.contamination})')
     ax.legend(loc='best')
     ax.set_xticks([]), ax.set_yticks([])
     fig.tight_layout()
-    png = os.path.join(out_dir, 'tsne.png')
+    png = os.path.join(out_dir, f'tsne{suffix}.png')
     fig.savefig(png, dpi=200)
     plt.close(fig)
 
@@ -158,10 +300,10 @@ def _run(args):
             ax.set_title(title)
             ax.set_xticks([]), ax.set_yticks([])
         axes[0, 0].legend(loc='best')
-        fig.suptitle(f't-SNE colored by patch grid position — {os.path.basename(out_dir)}',
-                     y=0.995)
+        fig.suptitle(f't-SNE [{label}] colored by patch grid position — '
+                     f'{os.path.basename(out_dir)}', y=0.995)
         fig.tight_layout()
-        grid_png = os.path.join(out_dir, 'tsne_grid.png')
+        grid_png = os.path.join(out_dir, f'tsne_grid{suffix}.png')
         fig.savefig(grid_png, dpi=200)
         plt.close(fig)
         print(f'grid-colored plot -> {grid_png}')
@@ -201,7 +343,7 @@ def _run(args):
                 bboxprops=dict(edgecolor='red' if flags[i] else '#666666',
                                linewidth=1.6 if flags[i] else 0.8))
             ax.add_artist(ab)
-        ax.set_title(f't-SNE of codec code-usage histograms — {os.path.basename(out_dir)} '
+        ax.set_title(f't-SNE [{label}] — {os.path.basename(out_dir)} '
                      f'(Z-MIP thumbnails on {n_th} farthest-point dots)')
         ax.legend(loc='lower right')
         ax.set_xticks([]), ax.set_yticks([])
@@ -209,13 +351,13 @@ def _run(args):
         ax.set_xlim(emb[:, 0].min() - m[0], emb[:, 0].max() + m[0])
         ax.set_ylim(emb[:, 1].min() - m[1], emb[:, 1].max() + m[1])
         fig.tight_layout()
-        thumbs_png = os.path.join(out_dir, 'tsne_thumbs.png')
+        thumbs_png = os.path.join(out_dir, f'tsne_thumbs{suffix}.png')
         fig.savefig(thumbs_png, dpi=200)
         plt.close(fig)
         print(f'thumbnail plot -> {thumbs_png}')
 
     order = np.argsort(scores)                       # most anomalous first
-    csv_path = os.path.join(out_dir, 'anomalies.csv')
+    csv_path = os.path.join(out_dir, f'anomalies{suffix}.csv')
     with open(csv_path, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['name', 'anomaly_score', 'tsne_x', 'tsne_y'])
