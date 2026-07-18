@@ -1,22 +1,36 @@
-"""t-SNE map of stored codecs + anomaly flagging.
+"""t-SNE map of stored codecs + anomaly flagging for materials-science 3D imaging.
 
     python inference/latent_tsne.py --codec /home/cheese/workspace/Output/skipU300/codec
 
+CONTEXT: this is a materials-science 3D volume-imaging problem. The inputs are
+anisotropic 3D scans of material samples (e.g. THX10 tomography), which the
+IsoScope model encodes patch-by-patch into VQ codebook indices. Each {stem}.npz
+codec here is one 3D sub-volume (a 256x256xZ patch) of a much larger material
+sample. This script does an *unsupervised material-microstructure survey*: it
+embeds every patch by its latent content so patches of similar microstructure
+land together, and flags the unusual ones — the goal is to spot rare or defect
+regions (voids, inclusions, cracks, dense/boundary structure) across a large
+sample without any labels.
+
 Gathers every {stem}.npz written by inference/inference_latent.py (or
-encode_stack.py) in --codec, turns each patch's codec into a feature (see
---feat below), then:
+encode_stack.py) in --codec, turns each material patch's codec into a feature
+(see --feat below), then:
   - PCA -> t-SNE to 2D, scatter plot saved as {out_dir}/tsne{_feat}.png
+    (nearby dots = similar microstructure)
   - IsolationForest on the PCA features flags anomalous patches (fraction
-    set by --contamination), drawn in red and labeled on the plot
+    set by --contamination) — candidate rare/defect microstructure regions,
+    drawn in red and labeled on the plot
   - {out_dir}/anomalies{_feat}.csv lists the flagged patch names with their
     anomaly score (most anomalous first) and t-SNE coordinates
-  - when all stems are AAABBBCCC patch indices (AAA=Y, BBB=X, CCC=Z), a
-    second figure {out_dir}/tsne_grid{_feat}.png colors the same embedding by
-    grid position: one RGB=(Y,X,Z) panel and one viridis panel per axis
+  - when all stems are AAABBBCCC patch indices (AAA=Y, BBB=X, CCC=Z spatial
+    position of the patch inside the sample volume), a second figure
+    {out_dir}/tsne_grid{_feat}.png colors the same embedding by that position:
+    one RGB=(Y,X,Z) panel and one viridis panel per axis (well-mixed colors
+    mean patches cluster by microstructure, not by where they sit in the sample)
   - with --thumbs <raw data dir>, a paper-style figure
     {out_dir}/tsne_thumbs{_feat}.png annotates ~--n_thumbs dots (spread by
     farthest-point sampling, anomalies included) with downsampled Z-MIP
-    thumbnails of the corresponding volumes
+    thumbnails of the corresponding material sub-volumes
 
 Features (--feat): 'hist' (default) is the bag-of-codes histogram (per-scale
 codebook usage, L1-normalized, concatenated); 'hist_std'/'tfidf'/'hist_bal'
@@ -25,12 +39,13 @@ latent from the stored indices and pools it (see load_latent_features). The
 hist* features are pure CPU/sklearn; 'latent' loads the model (GPU).
 
 WHAT WORKS: the '--feat latent' embedding (e.g. --zpool mean) is the one that
-maps to real image content — overlaying its IsolationForest anomalies back
-onto a raw slice (inference/latent_tsne overlay, e.g. anomalies_overlay_*.png)
-lands the red patches on genuine structure (edges/voids/inclusions), whereas
-the bag-of-codes 'hist' embedding is near-1D (PC1 ~0.93) and background-code
-dominated, so it separates only gross outliers. Prefer --feat latent for
-structure-aware maps; the hist variants stay for cheap, model-free triage.
+maps to real material microstructure — overlaying its IsolationForest anomalies
+back onto a raw slice (inference/latent_tsne overlay, e.g.
+anomalies_overlay_*.png) lands the red patches on genuine material features
+(grain edges / voids / inclusions), whereas the bag-of-codes 'hist' embedding is
+near-1D (PC1 ~0.93) and background-code dominated (empty/matrix regions of the
+sample), so it separates only gross outliers. Prefer --feat latent for
+microstructure-aware maps; the hist variants stay for cheap, model-free triage.
 
 out_dir defaults to the codec folder's parent (the experiment dir).
 """
