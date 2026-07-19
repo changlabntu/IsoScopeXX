@@ -89,9 +89,11 @@ def background_fill(eng):
     return fills
 
 
-def warp_latents(scale_latents, inv_mats, fills, device):
+def warp_latents(scale_latents, inv_mats, fills, device, mode='bilinear'):
     """Warp every per-scale latent plane z by inv_mats[z] (global warp, before
-    any tiling). Only the translation is rescaled to latent px."""
+    any tiling). Only the translation is rescaled to latent px. mode is the
+    grid_sample kernel ('bilinear' default; 'bicubic' blends sub-latent-px
+    shifts with less low-pass smoothing)."""
     lat_mats = inv_mats.copy()
     lat_mats[:, :, 2] /= features.STRIDE
     warped = []
@@ -99,7 +101,7 @@ def warp_latents(scale_latents, inv_mats, fills, device):
         for s, fill in zip(scale_latents, fills):
             planes = s[0].permute(3, 0, 1, 2).to(device)          # (Z, 4, h, w)
             f = fill.to(device) if torch.is_tensor(fill) else fill
-            w = affine.warp_slices(planes, lat_mats, mode='bilinear', fill=f)
+            w = affine.warp_slices(planes, lat_mats, mode=mode, fill=f)
             warped.append(w.permute(1, 2, 3, 0)[None].cpu())      # (1, 4, h, w, Z)
     return warped
 
