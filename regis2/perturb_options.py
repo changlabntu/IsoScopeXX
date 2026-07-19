@@ -57,6 +57,21 @@ def jitter_transforms(nz, rot, trans, scale, seed):
     return np.stack(mats)
 
 
+def chunk_transforms(nz, rot=1.0, trans=6.0, scale=0.01, seed=0,
+                     breaks=(1 / 3, 2 / 3)):
+    """Single chunk-boundary step: identity up to a break slice (nz * a random
+    choice of `breaks`), then ONE constant similarity drawn from the walk-step
+    distribution (walk_big magnitudes by default) for every later slice —
+    mimics inter-chunk drift in chunked acquisition. Returns (mats, break_z)."""
+    rng = np.random.default_rng(seed)
+    zb = int(round(nz * rng.choice(breaks)))
+    m = affine.params_to_mat(rng.uniform(-rot, rot),
+                             rng.uniform(-trans, trans),
+                             rng.uniform(-trans, trans),
+                             1.0 + rng.uniform(-scale, scale))
+    return np.stack([affine.identity()] * zb + [m] * (nz - zb)), zb
+
+
 def drift_transforms(nz, amp=10.0, rot=1.0, cycles=1.0):
     """Smooth deterministic drift: sinusoidal translation + rotation."""
     z = np.arange(nz) / max(nz - 1, 1)
@@ -101,7 +116,8 @@ def main():
                ('walk', np.stack(walk)),
                ('jitter', jitter_transforms(Z, 0.5, 3.0, 0.005, args.seed)),
                ('drift', drift_transforms(Z)),
-               ('walk_big', np.stack(walk_big))]
+               ('walk_big', np.stack(walk_big)),
+               ('chunk', chunk_transforms(Z, seed=args.seed + 2)[0])]
 
     name = os.path.splitext(os.path.basename(args.tif))[0]
     out_dir = os.path.join(args.out_base, name)

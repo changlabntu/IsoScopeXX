@@ -40,7 +40,7 @@ from glob import glob  # noqa: E402
 
 from registration import affine, enhance, features  # noqa: E402
 from registration.perturb import sample_transforms  # noqa: E402
-from regis2.perturb_options import apply, drift_transforms  # noqa: E402
+from regis2.perturb_options import apply, chunk_transforms, drift_transforms  # noqa: E402
 
 DEFAULT_CODEC = '/home/cheese/workspace/Output/skipU300/codec'
 DEFAULT_RAW = '/home/cheese/workspace/Data/thx10/roiAdsp4'
@@ -83,7 +83,7 @@ def main():
     parser.add_argument('--out_dir', default=DEFAULT_OUT)
     parser.add_argument('--frac', type=float, default=0.1)
     parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--corrupt', choices=('walk_drift', 'drift'),
+    parser.add_argument('--corrupt', choices=('walk_drift', 'drift', 'chunk'),
                         default='walk_drift',
                         help='drift = smooth sinusoid only (+-10 px / +-1 deg '
                              'at --drift_scale 1, no random walk): tiny '
@@ -145,6 +145,8 @@ def main():
                 if args.corrupt == 'drift':
                     gt = drift_transforms(Z, amp=10.0 * args.drift_scale,
                                           rot=1.0 * args.drift_scale)
+                elif args.corrupt == 'chunk':
+                    gt, _ = chunk_transforms(Z, seed=1000 + i)
                 else:
                     _, walk = sample_transforms(Z, 0.5, 3.0, 0.005, 1000 + i)
                     gt = np.stack([affine.compose(d, w) for d, w

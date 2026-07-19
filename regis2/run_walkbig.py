@@ -20,15 +20,14 @@ Steps (everything imported from registration/, nothing there modified):
    enhance.decode_tiled in ONE 32x32x32-latent tile (256^3 out, no seams);
    plus unwarped decodes of original and corrupted, and the pixel-space
    registration of the input by the same recovered transforms (old way).
-4. Two uint8 3D tifs of ZX pages (repo convention for enhancement viewing:
+4. One uint8 3D tif of ZX pages (repo convention for enhancement viewing:
    page = Y, rows = super-resolved Z, cols = X; inputs windowed [-1,1],
    enhanced [-0.8,1] = the 11g floor):
-   {tag}_input_vs_enhanced.tif   input | latent-registered enhanced
    {tag}_compare7.tif            original | corrupted | original enh |
                                  corrupted enh | latent-reg enh |
                                  latent-reg input (pixel warp, trilinear) |
                                  latent-reg input enhanced (old way)
-   (tag = walk | walkbig; .npy/.json side outputs share the tag)
+   (tag = walk | walkbig | ...; .npy/.json side outputs share the tag)
 """
 
 import argparse
@@ -48,8 +47,9 @@ import torch.nn.functional as F  # noqa: E402
 from registration import affine, enhance, features, register  # noqa: E402
 from registration.evaluate import transform_errors  # noqa: E402
 from registration.perturb import sample_transforms  # noqa: E402
+from regis2.graph_tv import solve_graph_tv  # noqa: E402
 from regis2.perturb_options import (DEFAULT_TIF, DEFAULT_OUT, apply,  # noqa: E402
-                                    drift_transforms, upz)
+                                    chunk_transforms, drift_transforms, upz)
 
 
 def encode_h_planes(eng, stack, zbatch=8):
@@ -92,11 +92,18 @@ def main():
     parser = argparse.ArgumentParser(description='regis2 walk_big latent->decode run')
     parser.add_argument('--tif', default=DEFAULT_TIF, help='(Z, Y, X) [-1, 1] tiff')
     parser.add_argument('--out_base', default=DEFAULT_OUT)
-    parser.add_argument('--perturb', choices=('walk_big', 'walk', 'walk_drift'),
+    parser.add_argument('--perturb',
+                        choices=('walk_big', 'walk', 'walk_drift', 'drift', 'chunk'),
                         default='walk_big',
                         help="Corruption model (default walk_big; 'walk' = "
                              "registration/ defaults; 'walk_drift' = walk + "
-                             'smooth sinusoidal drift)')
+                             "smooth sinusoidal drift; 'drift' = the sinusoid "
+                             "alone, scaled by --drift_scale; 'chunk' = one "
+                             'walk_big-magnitude step at Z/3 or 2Z/3 — inter-'
+                             'chunk drift)')
+    parser.add_argument('--drift_scale', type=float, default=1.0,
+                        help='drift mode: amp = 10*scale px, rot = 1*scale deg '
+                             '(!= 1 goes into the output tag)')
     parser.add_argument('--seed', type=int, default=None,
                         help='Walk seed (default: the matching perturb_options '
                              'panel — 1 for walk_big, 0 for walk)')
@@ -105,6 +112,15 @@ def main():
     parser.add_argument('--reg_t', type=float, default=5.0)
     parser.add_argument('--reg_rs', type=float, default=10.0)
     parser.add_argument('--anchor', type=float, default=0.05)
+    parser.add_argument('--solver', choices=('anchor', 'tv'), default='anchor',
+                        help="Graph solve: 'anchor' = affine.solve_graph "
+                             "(identity prior); 'tv' = regis2.graph_tv fused-"
+                             'lasso on increments — one prior for drift, chunk '
+                             "tears and walks alike (tag suffix 'tv')")
+    parser.add_argument('--tv', type=float, default=4.0,
+                        help='tv solver: translation-increment penalty (px)')
+    parser.add_argument('--tv_lin', type=float, default=2.0,
+                        help='tv solver: rot/scale-increment penalty (px-equiv)')
     parser.add_argument('--model', default='skipU')
     parser.add_argument('--latent_interp', choices=('bilinear', 'bicubic'),
                         default='bilinear',
@@ -130,29 +146,44 @@ def main():
     print(f'{args.tif}: ({Z}, {Y}, {X}) -> {out_dir}')
 
     # 1. corrupt (similarity random walk) + save GT
-    rot, trans, scale, seed0 = ((1.0, 6.0, 0.01, 1) if args.perturb == 'walk_big'
+    rot, trans, scale, seed0 = ((1.0, 6.0, 0.01, 1)
+                                if args.perturb in ('walk_big', 'chunk')
                                 else (0.5, 3.0, 0.005, 0))
     drift_rot = 1.0
     if args.no_rot:
         rot = drift_rot = 0.0
     seed = seed0 if args.seed is None else args.seed
     tag = args.perturb.replace('_', '')
+    if args.perturb == 'drift' and args.drift_scale != 1.0:
+        tag += f'{args.drift_scale:g}'
     if args.latent_interp == 'bicubic':
         tag += 'bc'
     if args.warp_space == 'prequant':
         tag += 'pq'
     if args.no_rot:
         tag += 'nr'
-    _, gt_mats = sample_transforms(Z, rot, trans, scale, seed)
-    gt_mats = np.stack(gt_mats)
-    if args.perturb == 'walk_drift':
-        gt_mats = np.stack([affine.compose(d, w) for d, w
-                            in zip(drift_transforms(Z, rot=drift_rot), gt_mats)])
+    if args.solver == 'tv':
+        tag += 'tv'
+    break_z = None
+    if args.perturb == 'drift':
+        gt_mats = drift_transforms(Z, amp=10.0 * args.drift_scale,
+                                   rot=drift_rot * args.drift_scale)
+    elif args.perturb == 'chunk':
+        gt_mats, break_z = chunk_transforms(Z, rot=rot, trans=trans,
+                                            scale=scale, seed=seed)
+        print(f'chunk break at z={break_z}')
+    else:
+        _, gt_mats = sample_transforms(Z, rot, trans, scale, seed)
+        gt_mats = np.stack(gt_mats)
+        if args.perturb == 'walk_drift':
+            gt_mats = np.stack([affine.compose(d, w) for d, w
+                                in zip(drift_transforms(Z, rot=drift_rot), gt_mats)])
     corrupted = apply(vol, gt_mats, device)
     np.save(os.path.join(out_dir, f'corrupted_{tag}.npy'), corrupted)
     with open(os.path.join(out_dir, f'gt_{tag}.json'), 'w') as f:
-        json.dump(dict(tif=args.tif, rot=rot, trans=trans, scale=scale,
-                       seed=seed,
+        json.dump(dict(tif=args.tif, perturb=args.perturb, rot=rot, trans=trans,
+                       scale=scale, drift_scale=args.drift_scale, seed=seed,
+                       break_z=break_z,
                        abs_params=[affine.mat_to_params(m) for m in gt_mats],
                        abs_mats=gt_mats.tolist()), f, indent=2)
 
@@ -166,6 +197,11 @@ def main():
     abs_mats, pairs, refined = register.register_features(
         torch.from_numpy(feats).to(device), stride, offsets, args.iters,
         reg_t=args.reg_t, reg_rs=args.reg_rs, anchor=args.anchor)
+    if args.solver == 'tv':
+        meas = [(i, j, affine.params_to_mat(r, tx * stride, ty * stride, s))
+                for (i, j), (r, tx, ty, s) in zip(pairs, refined)]
+        abs_mats = solve_graph_tv(meas, Z, tv=args.tv, tv_lin=args.tv_lin)
+        print(f'tv solve (tv {args.tv}, tv_lin {args.tv_lin})')
     with open(os.path.join(out_dir, f'recovered_{tag}.json'), 'w') as f:
         json.dump(dict(abs_params=[affine.mat_to_params(m) for m in abs_mats],
                        abs_mats=[m.tolist() for m in abs_mats]), f, indent=2)
@@ -225,9 +261,6 @@ def main():
         print(f'-> {path}  ({pages.shape} uint8, pages = Y, ZX view, {note})')
 
     tri = upz(corrupted)
-    zx_tif(f'{tag}_input_vs_enhanced.tif',
-           [u8(tri, -1, 1), u8(enhanced, -0.8, 1)],
-           'input | latent-registered enhanced')
     zx_tif(f'{tag}_compare7.tif',
            [u8(upz(vol), -1, 1), u8(tri, -1, 1), u8(original_enh, -0.8, 1),
             u8(corrupted_enh, -0.8, 1), u8(enhanced, -0.8, 1),
