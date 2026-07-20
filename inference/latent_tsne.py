@@ -52,6 +52,7 @@ out_dir defaults to the codec folder's parent (the experiment dir).
 
 import argparse
 import csv
+import json
 import os
 import re
 import sys
@@ -67,21 +68,55 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 
+def _load_norm(chunk_dir):
+    p = os.path.join(chunk_dir, 'norm_params.json')
+    if os.path.isfile(p):
+        with open(p) as f:
+            return json.load(f)
+    return {}
+
+
+def gather_codecs(codec):
+    """Resolve --codec to a list of (stem, npz_path, chunk_norm_params).
+
+    A single chunk dir (npz files directly inside) -> 6-digit rrrccc stems, as
+    before. A codec/ TREE (subdirs, each with npz — the z0000-0048 .. layout
+    encode_stack writes) -> ONE combined set with 9-digit rrrcccZZZ stems, ZZZ
+    the z-chunk ordinal (chunk dirs sorted = z order). The 9-digit form makes
+    the 3D (Y=rrr, X=ccc, Z=ZZZ) grid coloring and per-chunk thumbnails work,
+    so a whole-sample survey is one call on the codec/ root."""
+    codec = os.path.abspath(codec.rstrip('/'))
+    direct = sorted(glob(os.path.join(codec, '*.npz')))
+    if direct:                                           # single chunk dir
+        np0 = _load_norm(codec)
+        return [(os.path.splitext(os.path.basename(f))[0], f, np0) for f in direct]
+    chunk_dirs = sorted(d for d in glob(os.path.join(codec, '*'))
+                        if os.path.isdir(d) and glob(os.path.join(d, '*.npz')))
+    if not chunk_dirs:
+        raise FileNotFoundError(f'No .npz codecs in {codec} or its subdirs')
+    recs = []
+    for zc, cd in enumerate(chunk_dirs):
+        np0 = _load_norm(cd)
+        for f in sorted(glob(os.path.join(cd, '*.npz'))):
+            rc = os.path.splitext(os.path.basename(f))[0]        # rrrccc
+            recs.append((f'{rc}{zc:03d}', f, np0))               # rrrcccZZZ
+    return recs
+
+
 def load_features(codec_dir):
     """(stems, features, blocks): per-patch concatenated per-scale code
     histograms. blocks = the (start, end) column range of each scale in the
-    concatenated feature (so a caller can reweight scales independently)."""
-    files = sorted(glob(os.path.join(codec_dir, '*.npz')))
-    if not files:
-        raise FileNotFoundError(f'No .npz codecs in {codec_dir}')
+    concatenated feature (so a caller can reweight scales independently).
+    codec_dir may be a single chunk dir or a codec/ tree (see gather_codecs)."""
+    recs = gather_codecs(codec_dir)
     stems, per_scale = [], None
-    for f in files:
+    for stem, f, _ in recs:
         z = np.load(f)
         scales = sorted((k for k in z.files if k.startswith('scale_')),
                         key=lambda k: int(k.split('_')[1]))
         if per_scale is None:
             per_scale = [[] for _ in scales]
-        stems.append(os.path.splitext(os.path.basename(f))[0])
+        stems.append(stem)
         for k, key in enumerate(scales):
             per_scale[k].append(z[key].ravel())
     feats, blocks, start = [], [], 0
@@ -138,18 +173,17 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
     per_scale=True pools each scale separately and concatenates them, returning
     per-scale blocks so the caller can weigh scales equally. Returns
     (stems, features, blocks)."""
-    import json
     import torch
     import torch.nn.functional as Fnn
     from inference import Engine
+    recs = gather_codecs(codec_dir)
     if model is None:
-        model = json.load(open(os.path.join(codec_dir, 'norm_params.json')))['model']
+        model = recs[0][2].get('model')
+        if model is None:
+            raise ValueError(f'no norm_params.json model in {codec_dir}; pass model=')
     eng = Engine.from_registry(model, epoch=epoch, device=device)
     if half:
         eng.gan.half()
-    files = sorted(glob(os.path.join(codec_dir, '*.npz')))
-    if not files:
-        raise FileNotFoundError(f'No .npz codecs in {codec_dir}')
     zp = (lambda t: t.amax(-1)) if zpool == 'max' else (lambda t: t.mean(-1))
 
     def pool(vol):                                        # (1, C, H, W, Z) -> flat (C*s*s,)
@@ -157,7 +191,7 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
         return p.flatten().cpu().numpy()
 
     stems, feats, n_scales = [], [], None
-    for f in files:
+    for stem, f, _ in recs:
         z = np.load(f)
         scales = sorted((k for k in z.files if k.startswith('scale_')),
                         key=lambda k: int(k.split('_')[1]))
@@ -166,7 +200,7 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
         n_scales = len(lat)
         feats.append(np.concatenate([pool(L) for L in lat]) if per_scale
                      else pool(sum(lat)))
-        stems.append(os.path.splitext(os.path.basename(f))[0])
+        stems.append(stem)
     feats = np.stack(feats)
     if per_scale:
         d = feats.shape[1] // n_scales                   # each scale block same width
@@ -190,15 +224,14 @@ def build_features(args):
     return stems, transform_hist(hist, args.feat, blocks), args.feat
 
 
-def build_mip_thumb(args, stems):
+def build_mip_thumb(args, stem_np0):
     """A mip_thumb(stem) -> 2D [0,1] MIP thumbnail, or None if none can be
     sourced. Priority: an explicit --thumbs dir of raw {stem}.tif volumes;
-    otherwise the codec's own recorded zarr source (source/zarr_level/z_range/
-    patch in norm_params.json), read patch-by-patch. Returns None (with a note)
-    when neither is available (e.g. a TIFF-sourced codec, non-rrrccc stems, or
-    tensorstore missing) so the run still produces the other figures."""
-    import json
-
+    otherwise each patch's OWN recorded zarr source (source/zarr_level/z_range/
+    patch in its chunk's norm_params.json — stem_np0 maps stem -> that dict), so
+    a multi-chunk survey pulls each thumbnail from the right z-slab. Returns None
+    (with a note) when neither is available (a TIFF-sourced codec, non-rrrccc[ZZZ]
+    stems, or tensorstore missing) so the run still produces the other figures."""
     def finish(m):
         step = max(1, m.shape[0] // args.thumb_px)
         m = m[::step, ::step].astype(np.float32)
@@ -213,27 +246,30 @@ def build_mip_thumb(args, stems):
             return finish(v.max(axis=0))                          # (Z,Y,X) -> (Y,X)
         return mip_thumb
 
-    npf = os.path.join(args.codec, 'norm_params.json')
-    if not os.path.isfile(npf):
-        print('thumbnails: no --thumbs dir and no norm_params.json in the codec dir; skipping')
-        return None
-    with open(npf) as f:
-        np0 = json.load(f)
-    if 'zarr_level' not in np0 or not all(re.fullmatch(r'\d{6}', s) for s in stems):
-        print(f"thumbnails: need a zarr-sourced codec with rrrccc stems "
-              f"(source={np0.get('source')}); pass --thumbs a raw-tif dir. Skipping.")
+    sample = next(iter(stem_np0.values()), {})
+    if 'zarr_level' not in sample or not all(re.fullmatch(r'\d{6}|\d{9}', s) for s in stem_np0):
+        print(f"thumbnails: need a zarr-sourced codec with rrrccc[ZZZ] stems "
+              f"(source={sample.get('source')}); pass --thumbs a raw-tif dir. Skipping.")
         return None
     try:
         from inference.zarr_io import open_zarr
-        arr = open_zarr(np0['source'], np0['zarr_level'])
-    except Exception as e:                                         # tensorstore/env/IO
-        print(f'thumbnails: cannot open zarr source ({str(e).splitlines()[0]}); skipping')
+    except Exception as e:                                         # tensorstore/env
+        print(f'thumbnails: cannot import zarr reader ({str(e).splitlines()[0]}); skipping')
         return None
-    patch, (za, zb) = np0['patch'], np0['z_range']
+    cache = {}
+
+    def arr_for(np0):                              # one open store per (source, level)
+        k = (np0['source'], np0['zarr_level'])
+        if k not in cache:
+            cache[k] = open_zarr(*k)
+        return cache[k]
 
     def mip_thumb(stem):                                          # zarr axes (z, x, y)
-        r, c = int(stem[:3]), int(stem[3:])
-        v = arr[za:zb, c * patch:(c + 1) * patch, r * patch:(r + 1) * patch].read().result()
+        np0 = stem_np0[stem]
+        patch, (za, zb) = np0['patch'], np0['z_range']
+        r, c = int(stem[:3]), int(stem[3:6])                     # rrrccc or rrrcccZZZ
+        v = arr_for(np0)[za:zb, c * patch:(c + 1) * patch,
+                         r * patch:(r + 1) * patch].read().result()
         return finish(v.max(axis=0).T)                           # (Zc,x,y) -> (x,y) MIP -> (Y,X)
     return mip_thumb
 
@@ -253,7 +289,10 @@ def run(codec, out_dir=None, contamination=0.05, perplexity=30.0, pca=50,
 
 def main():
     parser = argparse.ArgumentParser(description='t-SNE + anomaly map of stored codecs')
-    parser.add_argument('--codec', required=True, help='Folder of {stem}.npz codec files')
+    parser.add_argument('--codec', required=True,
+                        help='A single chunk dir of {rrrccc}.npz, OR a codec/ tree of '
+                             'z*/ chunk dirs -> one combined whole-sample map (3D grid '
+                             'coloring by Y/X/Z-chunk)')
     parser.add_argument('--out_dir', default=None,
                         help="Output dir for tsne.png / anomalies.csv (default: --codec's parent)")
     parser.add_argument('--contamination', type=float, default=0.05,
@@ -377,7 +416,8 @@ def _run(args):
         plt.close(fig)
         print(f'grid-colored plot -> {grid_png}')
 
-    thumb_fn = None if args.no_thumbs else build_mip_thumb(args, stems)
+    stem_np0 = {stem: np0 for stem, _, np0 in gather_codecs(args.codec)}
+    thumb_fn = None if args.no_thumbs else build_mip_thumb(args, stem_np0)
     if thumb_fn is not None:
         # farthest-point sampling spreads the thumbnails over the map; seed it
         # with the most anomalous point so the outlier corner is represented
