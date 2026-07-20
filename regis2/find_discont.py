@@ -62,11 +62,19 @@ FIELDS = ['stem', 'ccc', 'score', 'spike_t', 'spike_ncc', 'coloc', 'z_star',
           'ncc_med', 'coh2_px', 'tex', 'gated', 'edge']
 
 
-def discover(codec_dir, limit=None):
+def discover(codec_dir, limit=None, chunks=None):
     """npz list + stems. Supports both flat layouts ({stem}.npz) and
-    encode_stack's chunked layout (z{a}-{b}/{rrr}{ccc}.npz)."""
+    encode_stack's chunked layout (z{a}-{b}/{rrr}{ccc}.npz); `chunks`
+    (comma-separated dir names) restricts to those z-chunks."""
     subs = sorted(d for d in glob(os.path.join(codec_dir, 'z*-*'))
                   if os.path.isdir(d))
+    if chunks:
+        want = chunks.split(',')
+        missing = [c for c in want if not any(os.path.basename(d) == c for d in subs)]
+        if missing:
+            raise FileNotFoundError(f'chunk(s) {missing} not under {codec_dir}; '
+                                    f'have {[os.path.basename(d) for d in subs]}')
+        subs = [d for d in subs if os.path.basename(d) in want]
     if subs:
         files = [f for d in subs for f in sorted(glob(os.path.join(d, '*.npz')))]
     else:
@@ -87,15 +95,17 @@ def group_label(stem):
 
 def load_raw(stem, args):
     """Raw (Z, Y, X) [-1, 1] patch for verification: tif (flat layout) or a
-    window-normalized block from the source OME-Zarr (chunked layout)."""
+    window-normalized block from the source OME-Zarr (chunked layout; patch
+    size and z-range come from norm_params.json / the chunk dir name)."""
     if args.zarr:
         from inference.zarr_io import open_zarr
         d, base = os.path.split(stem)
-        za = int(d[1:].split('-')[0])
+        za, zb = (int(v) for v in d[1:].split('-'))
         row, col = int(base[:3]), int(base[3:6])
+        p = args.patch
         arr = open_zarr(args.zarr, args.zarr_level)
-        blk = arr[za:za + 32, col * 256:(col + 1) * 256,
-                  row * 256:(row + 1) * 256].read().result()
+        blk = arr[za:zb, col * p:(col + 1) * p,
+                  row * p:(row + 1) * p].read().result()
         v = blk.astype(np.float32).transpose(0, 2, 1)      # (z,x,y) -> (Z,Y,X)
         lo, hi = args.window
         return np.clip((v - lo) / (hi - lo), 0, 1) * 2 - 1
@@ -203,6 +213,35 @@ def verify_candidate(vol, rec, args, device):
                 ncc_base=ncc_base, recovery=recovery, verdict=verdict)
 
 
+def gap_xyz(stem, z_star, patch):
+    """Verified gap -> level-0 (x, y, z) in the source zarr's own axis frame
+    (x = dim1 / ccc-indexed, y = dim2 / rrr-indexed): patch-center x/y, z = the
+    earlier slice of the suspect pair (the gap sits between z and z+1).
+    Chunked stems (z{a}-{b}/{rrr}{ccc}) only."""
+    d, base = os.path.split(stem)
+    za = int(d[1:].split('-')[0])
+    row, col = int(base[:3]), int(base[3:6])
+    return (int((col + 0.5) * patch), int((row + 0.5) * patch), za + z_star)
+
+
+def merge_gaps(path, xyz):
+    """Merge gap coordinates into the running x,y,z csv (dedup, z-sorted) so
+    successive chunk scans keep appending to one whole-stack list."""
+    have = set()
+    if os.path.exists(path):
+        with open(path) as f:
+            have = {tuple(int(float(v)) for v in ln.split(','))
+                    for ln in f.read().splitlines()[1:] if ln.strip()}
+    n0 = len(have)
+    have |= set(xyz)
+    with open(path, 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['x', 'y', 'z'])
+        for p in sorted(have, key=lambda t: (t[2], t[1], t[0])):
+            w.writerow(p)
+    print(f'-> {path} (+{len(have) - n0} new, {len(have)} gaps total)')
+
+
 def montage(results, vols, out_png):
     """Horizontal layout: candidates as columns, rows = XZ | YZ | info; a red
     arrow at the left edge marks the suspect pair (no line across the data)."""
@@ -250,14 +289,20 @@ def main():
     parser.add_argument('--zarr', default=None,
                         help='Source OME-Zarr for chunked codecs (verification '
                              'loads patches from here instead of --raw; needs '
-                             'py38zarr)')
-    parser.add_argument('--zarr_level', default='0')
+                             "py38zarr; default: the codec's norm_params.json "
+                             "'source')")
+    parser.add_argument('--zarr_level', default=None)
+    parser.add_argument('--chunks', default=None,
+                        help='Comma-separated z-chunk dirs to screen '
+                             '(e.g. z0288-0336; default: all)')
+    parser.add_argument('--patch', type=int, default=None,
+                        help='Zarr patch size in px (default: norm_params.json)')
     parser.add_argument('--window', type=float, nargs=2, default=None,
                         metavar=('LO', 'HI'),
                         help='Intensity window for --zarr patches (default: '
                              "the codec's norm_params.json)")
     parser.add_argument('--out_dir', default=DEFAULT_OUT)
-    parser.add_argument('--topn', type=int, default=20)
+    parser.add_argument('--topn', type=int, default=50)
     parser.add_argument('--model', default='skipU')
     parser.add_argument('--t_min_px', type=float, default=2.0,
                         help='Screen gate: min spike magnitude (image px)')
@@ -267,6 +312,10 @@ def main():
     parser.add_argument('--rec_min', type=float, default=0.5)
     parser.add_argument('--cons_max_px', type=float, default=1.5)
     parser.add_argument('--gap_min', type=float, default=0.05)
+    parser.add_argument('--gaps_file', default=None,
+                        help='Running x,y,z csv of verified (non-NOISE) gaps, '
+                             'merged across chunk scans (default for chunked '
+                             "codecs: <codec>/../gaps.csv; 'off' disables)")
     parser.add_argument('--limit', type=int, default=None, help='Debug subset')
     parser.add_argument('--control', action='store_true',
                         help='Inject a known 5 px chunk step into the quietest '
@@ -281,12 +330,25 @@ def main():
         getattr(eng.gan, nm).eval()
     device = eng.device
 
-    files, stems = discover(args.codec, args.limit)
-    if args.zarr and args.window is None:
-        np_json = glob(os.path.join(args.codec, 'z*-*', 'norm_params.json'))
+    files, stems = discover(args.codec, args.limit, args.chunks)
+    np_json = sorted({os.path.join(os.path.dirname(f), 'norm_params.json')
+                      for f in files})
+    np_json = [p for p in np_json if os.path.dirname(p) != args.codec
+               and os.path.exists(p)]
+    if np_json:                       # chunked layout: verify from source zarr
         meta = json.load(open(np_json[0]))
-        args.window = (meta['window_lo'], meta['window_hi'])
-        print(f'window from norm_params: {args.window}')
+        if args.zarr is None:
+            args.zarr = meta.get('source')
+        if args.zarr_level is None:
+            args.zarr_level = meta.get('zarr_level', '0')
+        if args.window is None:
+            args.window = (meta['window_lo'], meta['window_hi'])
+        if args.patch is None:
+            args.patch = meta['patch']
+        print(f"norm_params: zarr {args.zarr} level {args.zarr_level}, "
+              f'patch {args.patch}, window {args.window}')
+    if args.zarr_level is None:
+        args.zarr_level = '0'
     print(f'screening {len(files)} codecs from {args.codec}')
     records = []
     with torch.inference_mode():
@@ -377,6 +439,15 @@ def main():
     print(json.dumps(Counter(r['verdict'] for r in results), indent=None))
 
     montage(results, vols, os.path.join(args.out_dir, 'verify_montage.png'))
+
+    if args.gaps_file is None and np_json:
+        args.gaps_file = os.path.join(
+            os.path.dirname(os.path.normpath(args.codec)), 'gaps.csv')
+    gaps = [r for r in results if r['verdict'] != 'NOISE'
+            and os.path.dirname(r['stem'])]
+    if args.gaps_file and args.gaps_file != 'off' and gaps:
+        merge_gaps(args.gaps_file,
+                   [gap_xyz(r['stem'], r['z_star'], args.patch) for r in gaps])
 
 
 if __name__ == '__main__':

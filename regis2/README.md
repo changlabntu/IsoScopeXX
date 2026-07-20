@@ -89,3 +89,8 @@ pairwise solver can recover the unobservable smooth global gauge.
 QC loop closed end-to-end from the codec: detect misaligned patches (jump
 feature) → recover transforms (`register.py` + TV solve) → correct in latent
 space and decode enhanced (`enhance.py`).
+
+**Real-data application:** `find_discont.py` + `measure_drift.py` swept the
+whole THX10 volume codec — 193 verified gaps (seven major event planes,
+geometric tears only at the stack bottom) and a steady +63 px global drift.
+See **`THX10_GAPS_DRIFT.md`**.
