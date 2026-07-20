@@ -275,16 +275,17 @@ def build_mip_thumb(args, stem_np0):
 
 
 def run(codec, out_dir=None, contamination=0.05, reducer='tsne', perplexity=30.0,
-        n_neighbors=15, min_dist=0.1, pca=50, seed=0, thumbs=None, no_thumbs=False,
-        n_thumbs=48, thumb_px=56, feat='hist', zpool='max', spatial=8, model=None,
-        epoch=None, device=None, half=False, balance_scales=False):
+        n_neighbors=15, min_dist=0.1, umap_trim=0.0, pca=50, seed=0, thumbs=None,
+        no_thumbs=False, n_thumbs=48, thumb_px=56, feat='hist', zpool='max', spatial=8,
+        model=None, epoch=None, device=None, half=False, balance_scales=False):
     """The whole pipeline as a callable (used by encode_stack.py --tsne)."""
     args = argparse.Namespace(codec=codec, out_dir=out_dir, contamination=contamination,
                               reducer=reducer, perplexity=perplexity, n_neighbors=n_neighbors,
-                              min_dist=min_dist, pca=pca, seed=seed, thumbs=thumbs,
-                              no_thumbs=no_thumbs, n_thumbs=n_thumbs, thumb_px=thumb_px,
-                              feat=feat, zpool=zpool, spatial=spatial, model=model, epoch=epoch,
-                              device=device, half=half, balance_scales=balance_scales)
+                              min_dist=min_dist, umap_trim=umap_trim, pca=pca, seed=seed,
+                              thumbs=thumbs, no_thumbs=no_thumbs, n_thumbs=n_thumbs,
+                              thumb_px=thumb_px, feat=feat, zpool=zpool, spatial=spatial,
+                              model=model, epoch=epoch, device=device, half=half,
+                              balance_scales=balance_scales)
     _run(args)
 
 
@@ -307,6 +308,11 @@ def main():
                         help='UMAP n_neighbors (default 15; higher = more global structure)')
     parser.add_argument('--min_dist', type=float, default=0.1,
                         help='UMAP min_dist (default 0.1; lower = tighter clusters)')
+    parser.add_argument('--umap_trim', type=float, default=0.0,
+                        help='UMAP only: drop this fraction of points farthest from the '
+                             '(median) centroid of the 2D embedding before plotting, so a '
+                             'sparse noise halo stops dominating the view (default 0 = off; '
+                             'e.g. 0.03 drops the farthest 3%%). Trims all UMAP figures + CSV.')
     parser.add_argument('--pca', type=int, default=50,
                         help='PCA dims before the reducer / IsolationForest (default 50)')
     parser.add_argument('--seed', type=int, default=0)
@@ -375,6 +381,20 @@ def _run(args):
         emb = TSNE(n_components=2, perplexity=min(args.perplexity, (n - 1) / 3),
                    init='pca', learning_rate='auto',
                    random_state=args.seed).fit_transform(X)
+
+    # UMAP lays a dense material core inside a sparse noise halo; the halo
+    # dominates the plot extent (and the farthest-point thumbnail sampler).
+    # Drop the farthest --umap_trim fraction by distance to the (robust median)
+    # centroid so the core fills the view. All downstream figures + CSV follow.
+    if method == 'umap' and args.umap_trim > 0:
+        center = np.median(emb, axis=0)
+        dist = np.linalg.norm(emb - center, axis=1)
+        cutoff = np.quantile(dist, 1 - args.umap_trim)
+        keep = dist <= cutoff
+        print(f'umap_trim: dropping {int((~keep).sum())} of {len(keep)} points beyond '
+              f'distance {cutoff:.2f} to centroid (farthest {args.umap_trim * 100:.0f}%)')
+        emb, stems = emb[keep], [s for s, k in zip(stems, keep) if k]
+        flags, scores, n = flags[keep], scores[keep], int(keep.sum())
 
     fig, ax = plt.subplots(figsize=(9, 8))
     ax.scatter(emb[~flags, 0], emb[~flags, 1], s=18, c='#4878cf', alpha=0.7,
