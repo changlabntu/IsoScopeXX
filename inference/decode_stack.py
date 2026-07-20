@@ -350,10 +350,10 @@ def main():
                                              yc0:yc0 + patch].write(oslab))
                         while len(futs) > 8:
                             futs.pop(0).result()
-                    if args.tiff and not is_strip:
+                    if args.tiff:       # per-patch original, symmetric with the model output
                         tiff.imwrite(os.path.join(
                             orig_dir, f'{chunk}_r{r:03d}c{c:03d}.tif'), orig_pages(ocmp))
-                    elif is_strip:
+                    if orig_strip is not None:
                         orig_strip.append(ocmp)
             done = i + len(batch)
             if done % (args.batch * 10) < args.batch or done == len(cells):
