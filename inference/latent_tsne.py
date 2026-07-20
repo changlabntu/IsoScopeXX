@@ -274,13 +274,14 @@ def build_mip_thumb(args, stem_np0):
     return mip_thumb
 
 
-def run(codec, out_dir=None, contamination=0.05, perplexity=30.0, pca=50,
-        seed=0, thumbs=None, no_thumbs=False, n_thumbs=48, thumb_px=56, feat='hist',
-        zpool='max', spatial=8, model=None, epoch=None, device=None, half=False,
-        balance_scales=False):
+def run(codec, out_dir=None, contamination=0.05, reducer='tsne', perplexity=30.0,
+        n_neighbors=15, min_dist=0.1, pca=50, seed=0, thumbs=None, no_thumbs=False,
+        n_thumbs=48, thumb_px=56, feat='hist', zpool='max', spatial=8, model=None,
+        epoch=None, device=None, half=False, balance_scales=False):
     """The whole pipeline as a callable (used by encode_stack.py --tsne)."""
     args = argparse.Namespace(codec=codec, out_dir=out_dir, contamination=contamination,
-                              perplexity=perplexity, pca=pca, seed=seed, thumbs=thumbs,
+                              reducer=reducer, perplexity=perplexity, n_neighbors=n_neighbors,
+                              min_dist=min_dist, pca=pca, seed=seed, thumbs=thumbs,
                               no_thumbs=no_thumbs, n_thumbs=n_thumbs, thumb_px=thumb_px,
                               feat=feat, zpool=zpool, spatial=spatial, model=model, epoch=epoch,
                               device=device, half=half, balance_scales=balance_scales)
@@ -297,9 +298,17 @@ def main():
                         help="Output dir for tsne.png / anomalies.csv (default: --codec's parent)")
     parser.add_argument('--contamination', type=float, default=0.05,
                         help='Expected anomaly fraction for IsolationForest (default 0.05)')
-    parser.add_argument('--perplexity', type=float, default=30.0)
+    parser.add_argument('--reducer', choices=('tsne', 'umap'), default='tsne',
+                        help='2D embedding method (default tsne). Outputs are prefixed by '
+                             'the method (tsne_*.png / umap_*.png); anomaly flags are '
+                             'method-independent (IsolationForest on the PCA features).')
+    parser.add_argument('--perplexity', type=float, default=30.0, help='t-SNE perplexity (default 30)')
+    parser.add_argument('--n_neighbors', type=int, default=15,
+                        help='UMAP n_neighbors (default 15; higher = more global structure)')
+    parser.add_argument('--min_dist', type=float, default=0.1,
+                        help='UMAP min_dist (default 0.1; lower = tighter clusters)')
     parser.add_argument('--pca', type=int, default=50,
-                        help='PCA dims before t-SNE / IsolationForest (default 50)')
+                        help='PCA dims before the reducer / IsolationForest (default 50)')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--thumbs', default=None, metavar='DATA_DIR',
                         help='Override the thumbnail source with a directory of raw '
@@ -337,26 +346,35 @@ def main():
 def _run(args):
     from sklearn.decomposition import PCA
     from sklearn.ensemble import IsolationForest
-    from sklearn.manifold import TSNE
 
+    method = args.reducer                            # 'tsne' or 'umap'
+    mlabel = {'tsne': 't-SNE', 'umap': 'UMAP'}[method]
     out_dir = args.out_dir or os.path.dirname(os.path.abspath(args.codec).rstrip('/'))
     os.makedirs(out_dir, exist_ok=True)
 
     stems, feats, label = build_features(args)
-    suffix = '' if label == 'hist' else '_' + label      # keep legacy tsne.png for hist
+    suffix = '' if label == 'hist' else '_' + label      # keep legacy {method}.png for hist
     n = len(stems)
-    print(f'{n} codecs from {args.codec}, feat={label}, dim {feats.shape[1]}')
+    print(f'{n} codecs from {args.codec}, feat={label}, dim {feats.shape[1]}, reducer={method}')
 
     n_pca = min(args.pca, n - 1, feats.shape[1])
     X = PCA(n_components=n_pca, random_state=args.seed).fit_transform(feats)
 
+    # anomaly flagging is on the PCA features, independent of the 2D reducer
     iso = IsolationForest(contamination=args.contamination, random_state=args.seed)
     flags = iso.fit_predict(X) == -1                 # True = anomaly
     scores = iso.score_samples(X)                    # lower = more anomalous
 
-    emb = TSNE(n_components=2, perplexity=min(args.perplexity, (n - 1) / 3),
-               init='pca', learning_rate='auto',
-               random_state=args.seed).fit_transform(X)
+    if method == 'umap':
+        import umap
+        emb = umap.UMAP(n_components=2, n_neighbors=min(args.n_neighbors, n - 1),
+                        min_dist=args.min_dist, init='pca' if n_pca >= 2 else 'random',
+                        random_state=args.seed).fit_transform(X)
+    else:
+        from sklearn.manifold import TSNE
+        emb = TSNE(n_components=2, perplexity=min(args.perplexity, (n - 1) / 3),
+                   init='pca', learning_rate='auto',
+                   random_state=args.seed).fit_transform(X)
 
     fig, ax = plt.subplots(figsize=(9, 8))
     ax.scatter(emb[~flags, 0], emb[~flags, 1], s=18, c='#4878cf', alpha=0.7,
@@ -366,12 +384,12 @@ def _run(args):
     for i in np.where(flags)[0]:
         ax.annotate(stems[i], (emb[i, 0], emb[i, 1]), fontsize=6, color='darkred',
                     xytext=(3, 3), textcoords='offset points')
-    ax.set_title(f't-SNE [{label}] — {os.path.basename(out_dir)} '
+    ax.set_title(f'{mlabel} [{label}] — {os.path.basename(out_dir)} '
                  f'(n={n}, contamination={args.contamination})')
     ax.legend(loc='best')
     ax.set_xticks([]), ax.set_yticks([])
     fig.tight_layout()
-    png = os.path.join(out_dir, f'tsne{suffix}.png')
+    png = os.path.join(out_dir, f'{method}{suffix}.png')
     fig.savefig(png, dpi=200)
     plt.close(fig)
 
@@ -408,10 +426,10 @@ def _run(args):
             ax.set_title(title)
             ax.set_xticks([]), ax.set_yticks([])
         axes[0, 0].legend(loc='best')
-        fig.suptitle(f't-SNE [{label}] colored by patch grid position — '
+        fig.suptitle(f'{mlabel} [{label}] colored by patch grid position — '
                      f'{os.path.basename(out_dir)}', y=0.995)
         fig.tight_layout()
-        grid_png = os.path.join(out_dir, f'tsne_grid{suffix}.png')
+        grid_png = os.path.join(out_dir, f'{method}_grid{suffix}.png')
         fig.savefig(grid_png, dpi=200)
         plt.close(fig)
         print(f'grid-colored plot -> {grid_png}')
@@ -442,7 +460,7 @@ def _run(args):
                 bboxprops=dict(edgecolor='red' if flags[i] else '#666666',
                                linewidth=1.6 if flags[i] else 0.8))
             ax.add_artist(ab)
-        ax.set_title(f't-SNE [{label}] — {os.path.basename(out_dir)} '
+        ax.set_title(f'{mlabel} [{label}] — {os.path.basename(out_dir)} '
                      f'(Z-MIP thumbnails on {n_th} farthest-point dots)')
         ax.legend(loc='lower right')
         ax.set_xticks([]), ax.set_yticks([])
@@ -450,16 +468,16 @@ def _run(args):
         ax.set_xlim(emb[:, 0].min() - m[0], emb[:, 0].max() + m[0])
         ax.set_ylim(emb[:, 1].min() - m[1], emb[:, 1].max() + m[1])
         fig.tight_layout()
-        thumbs_png = os.path.join(out_dir, f'tsne_thumbs{suffix}.png')
+        thumbs_png = os.path.join(out_dir, f'{method}_thumbs{suffix}.png')
         fig.savefig(thumbs_png, dpi=200)
         plt.close(fig)
         print(f'thumbnail plot -> {thumbs_png}')
 
     order = np.argsort(scores)                       # most anomalous first
-    csv_path = os.path.join(out_dir, f'anomalies{suffix}.csv')
+    csv_path = os.path.join(out_dir, f'anomalies_{method}{suffix}.csv')
     with open(csv_path, 'w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['name', 'anomaly_score', 'tsne_x', 'tsne_y'])
+        w.writerow(['name', 'anomaly_score', 'emb_x', 'emb_y'])
         for i in order:
             if flags[i]:
                 w.writerow([stems[i], f'{scores[i]:.4f}', f'{emb[i, 0]:.2f}', f'{emb[i, 1]:.2f}'])
