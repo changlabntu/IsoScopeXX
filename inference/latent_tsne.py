@@ -190,15 +190,64 @@ def build_features(args):
     return stems, transform_hist(hist, args.feat, blocks), args.feat
 
 
+def build_mip_thumb(args, stems):
+    """A mip_thumb(stem) -> 2D [0,1] MIP thumbnail, or None if none can be
+    sourced. Priority: an explicit --thumbs dir of raw {stem}.tif volumes;
+    otherwise the codec's own recorded zarr source (source/zarr_level/z_range/
+    patch in norm_params.json), read patch-by-patch. Returns None (with a note)
+    when neither is available (e.g. a TIFF-sourced codec, non-rrrccc stems, or
+    tensorstore missing) so the run still produces the other figures."""
+    import json
+
+    def finish(m):
+        step = max(1, m.shape[0] // args.thumb_px)
+        m = m[::step, ::step].astype(np.float32)
+        lo, hi = np.percentile(m, 1), np.percentile(m, 99.5)
+        return np.clip((m - lo) / (hi - lo + 1e-8), 0, 1)
+
+    if args.thumbs:
+        import tifffile as tiff
+
+        def mip_thumb(stem):
+            v = tiff.imread(os.path.join(args.thumbs, stem + '.tif'))
+            return finish(v.max(axis=0))                          # (Z,Y,X) -> (Y,X)
+        return mip_thumb
+
+    npf = os.path.join(args.codec, 'norm_params.json')
+    if not os.path.isfile(npf):
+        print('thumbnails: no --thumbs dir and no norm_params.json in the codec dir; skipping')
+        return None
+    with open(npf) as f:
+        np0 = json.load(f)
+    if 'zarr_level' not in np0 or not all(re.fullmatch(r'\d{6}', s) for s in stems):
+        print(f"thumbnails: need a zarr-sourced codec with rrrccc stems "
+              f"(source={np0.get('source')}); pass --thumbs a raw-tif dir. Skipping.")
+        return None
+    try:
+        from inference.zarr_io import open_zarr
+        arr = open_zarr(np0['source'], np0['zarr_level'])
+    except Exception as e:                                         # tensorstore/env/IO
+        print(f'thumbnails: cannot open zarr source ({str(e).splitlines()[0]}); skipping')
+        return None
+    patch, (za, zb) = np0['patch'], np0['z_range']
+
+    def mip_thumb(stem):                                          # zarr axes (z, x, y)
+        r, c = int(stem[:3]), int(stem[3:])
+        v = arr[za:zb, c * patch:(c + 1) * patch, r * patch:(r + 1) * patch].read().result()
+        return finish(v.max(axis=0).T)                           # (Zc,x,y) -> (x,y) MIP -> (Y,X)
+    return mip_thumb
+
+
 def run(codec, out_dir=None, contamination=0.05, perplexity=30.0, pca=50,
-        seed=0, thumbs=None, n_thumbs=24, thumb_px=56, feat='hist', zpool='max',
-        spatial=8, model=None, epoch=None, device=None, half=False, balance_scales=False):
+        seed=0, thumbs=None, no_thumbs=False, n_thumbs=24, thumb_px=56, feat='hist',
+        zpool='max', spatial=8, model=None, epoch=None, device=None, half=False,
+        balance_scales=False):
     """The whole pipeline as a callable (used by encode_stack.py --tsne)."""
     args = argparse.Namespace(codec=codec, out_dir=out_dir, contamination=contamination,
                               perplexity=perplexity, pca=pca, seed=seed, thumbs=thumbs,
-                              n_thumbs=n_thumbs, thumb_px=thumb_px, feat=feat, zpool=zpool,
-                              spatial=spatial, model=model, epoch=epoch, device=device, half=half,
-                              balance_scales=balance_scales)
+                              no_thumbs=no_thumbs, n_thumbs=n_thumbs, thumb_px=thumb_px,
+                              feat=feat, zpool=zpool, spatial=spatial, model=model, epoch=epoch,
+                              device=device, half=half, balance_scales=balance_scales)
     _run(args)
 
 
@@ -214,8 +263,12 @@ def main():
                         help='PCA dims before t-SNE / IsolationForest (default 50)')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--thumbs', default=None, metavar='DATA_DIR',
-                        help='Directory of the raw {stem}.tif volumes; enables the '
-                             'thumbnail-annotated figure tsne_thumbs.png')
+                        help='Override the thumbnail source with a directory of raw '
+                             '{stem}.tif volumes. Default (no flag): thumbnails are drawn '
+                             "from the codec's own recorded zarr source (norm_params.json).")
+    parser.add_argument('--no_thumbs', action='store_true',
+                        help='Skip the thumbnail-annotated figure tsne_thumbs.png '
+                             '(on by default when a zarr-sourced codec is available)')
     parser.add_argument('--n_thumbs', type=int, default=24,
                         help='How many dots get a thumbnail (default 24)')
     parser.add_argument('--thumb_px', type=int, default=56,
@@ -324,18 +377,8 @@ def _run(args):
         plt.close(fig)
         print(f'grid-colored plot -> {grid_png}')
 
-    if args.thumbs:
-        import tifffile as tiff
-
-        def mip_thumb(stem):
-            """Z-MIP of the raw (Z, Y, X) volume, downsampled to ~thumb_px."""
-            v = tiff.imread(os.path.join(args.thumbs, stem + '.tif'))
-            m = v.max(axis=0).astype(np.float32)                  # (Y, X) MIP
-            step = max(1, m.shape[0] // args.thumb_px)
-            m = m[::step, ::step]
-            lo, hi = np.percentile(m, 1), np.percentile(m, 99.5)
-            return np.clip((m - lo) / (hi - lo + 1e-8), 0, 1)
-
+    thumb_fn = None if args.no_thumbs else build_mip_thumb(args, stems)
+    if thumb_fn is not None:
         # farthest-point sampling spreads the thumbnails over the map; seed it
         # with the most anomalous point so the outlier corner is represented
         n_th = min(args.n_thumbs, n)
@@ -354,7 +397,7 @@ def _run(args):
                    linewidths=0, label=f'anomaly ({flags.sum()})')
         for i in chosen:
             ab = AnnotationBbox(
-                OffsetImage(mip_thumb(stems[i]), cmap='gray', zoom=1.0),
+                OffsetImage(thumb_fn(stems[i]), cmap='gray', zoom=1.0),
                 (emb[i, 0], emb[i, 1]), frameon=True, pad=0.15,
                 bboxprops=dict(edgecolor='red' if flags[i] else '#666666',
                                linewidth=1.6 if flags[i] else 0.8))
