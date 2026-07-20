@@ -275,7 +275,7 @@ def build_mip_thumb(args, stem_np0):
 
 
 def run(codec, out_dir=None, contamination=0.05, perplexity=30.0, pca=50,
-        seed=0, thumbs=None, no_thumbs=False, n_thumbs=24, thumb_px=56, feat='hist',
+        seed=0, thumbs=None, no_thumbs=False, n_thumbs=48, thumb_px=56, feat='hist',
         zpool='max', spatial=8, model=None, epoch=None, device=None, half=False,
         balance_scales=False):
     """The whole pipeline as a callable (used by encode_stack.py --tsne)."""
@@ -308,8 +308,8 @@ def main():
     parser.add_argument('--no_thumbs', action='store_true',
                         help='Skip the thumbnail-annotated figure tsne_thumbs.png '
                              '(on by default when a zarr-sourced codec is available)')
-    parser.add_argument('--n_thumbs', type=int, default=24,
-                        help='How many dots get a thumbnail (default 24)')
+    parser.add_argument('--n_thumbs', type=int, default=48,
+                        help='How many dots get a thumbnail (default 48)')
     parser.add_argument('--thumb_px', type=int, default=56,
                         help='Thumbnail size in pixels after downsampling the MIP (default 56)')
     parser.add_argument('--feat', choices=('hist', 'hist_std', 'tfidf', 'hist_bal', 'latent'),
