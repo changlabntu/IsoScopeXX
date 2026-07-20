@@ -147,15 +147,18 @@ def load_indices(chunk_dir, cells):
     return [np.concatenate(lst) for lst in per_scale]
 
 
-def restore_uint16(eng, out_b, lo, hi, gain=None, dark=0.0):
+def restore_uint16(eng, out_b, lo, hi, gain=None, floor=0.0):
     """One (Y, X, Z') model-output patch -> uint16 in source units.
 
-    gain: optional (Y, X, 1) flat-field slab; the signal above dark is divided
-    by it (de-striping the stitch-tile vignetting, see --flatfield)."""
+    gain: optional (Y, X, 1) flat-field slab; the signal above floor is
+    divided by it (de-striping the stitch-tile vignetting, see --flatfield).
+    Signal at or below floor is untouched, so a floor set to the model's
+    background level keeps empty regions flat instead of amplifying the
+    decode's background pedestal."""
     w = eng.denormalize(out_b.float().cpu().numpy())        # pre-gamma [-1, 1]
     raw = (w + 1.0) * 0.5 * (hi - lo) + lo
     if gain is not None:
-        raw = dark + (raw - dark) / gain
+        raw = raw + np.maximum(raw - floor, 0.0) * (1.0 / gain - 1.0)
     return np.clip(np.rint(raw), 0, 65535).astype(np.uint16)
 
 
@@ -215,8 +218,16 @@ def main():
     parser.add_argument('--flatfield', default=None, metavar='NPZ',
                         help='De-stripe with a flatfield.npz from regis2/build_flatfield.py '
                              '(stitch-tile vignetting, see regis2/stitch.md): decoded '
-                             'patches become dark + (v - dark) / G(x, y) in source units. '
-                             '--orig comparisons stay uncorrected (raw source truth).')
+                             'signal above the floor is divided by G(x, y), in source '
+                             'units. --orig comparisons stay uncorrected (raw source '
+                             'truth).')
+    parser.add_argument('--ff_floor', type=float, default=None,
+                        help='Flat-field floor in source units (default: the '
+                             "flatfield.npz dark). The model's decoded background sits "
+                             'above the true dark (a pedestal); set the floor to that '
+                             'background level (~160 for the skipU THX10 codec) so '
+                             'empty regions stay flat instead of being brightened. '
+                             'Trade-off: foreground boost shrinks by (v-floor)/(v-dark).')
     parser.add_argument('--orig', action='store_true',
                         help="Also emit the source patch(es) from the codec's recorded source "
                              'store for side-by-side comparison, matched to --what: '
@@ -248,12 +259,13 @@ def main():
     H, W = np0['slice_hw']
     rows, cols = np0['grid_rows_cols']
     ff_gx = ff_gy = None
-    ff_dark = 0.0
+    ff_floor = 0.0
     if args.flatfield:
         ff_gx, ff_gy, ff_dark = load_flatfield(args.flatfield, H, W)
+        ff_floor = args.ff_floor if args.ff_floor is not None else ff_dark
         print(f'flat-field {args.flatfield}: gain range '
               f'[{min(ff_gx.min(), ff_gy.min()):.3f}, '
-              f'{max(ff_gx.max(), ff_gy.max()):.3f}], dark {ff_dark}')
+              f'{max(ff_gx.max(), ff_gy.max()):.3f}], floor {ff_floor}')
     up = infer_uprate(np0, eng) if args.what == 'decode' else 1
     cells = select_cells(args, rows, cols)
     z_full = max(chunk_z_range(n)[1] for n in all_names)
@@ -293,6 +305,7 @@ def main():
                            patch=patch, shape_zxy=list(shape), store_chunks=list(store_chunks),
                            crop=args.crop, roi_offset_zxy=[off_z, off_x, off_y],
                            flatfield=args.flatfield and os.path.abspath(args.flatfield),
+                           ff_floor=ff_floor if args.flatfield else None,
                            window_lo=np0['window_lo'], window_hi=np0['window_hi']), f, indent=2)
         print(f'zarr store {path}: shape (z, x, y) = {shape}, chunks {store_chunks}, uint16'
               + (f', ROI offset (z,x,y) = ({off_z}, {off_x}, {off_y})' if args.crop else ''))
@@ -364,7 +377,7 @@ def main():
                 if ff_gx is not None:       # absolute patch coords, --crop-independent
                     gain = (ff_gy[r * patch:(r + 1) * patch, None, None]
                             * ff_gx[None, c * patch:(c + 1) * patch, None])
-                u16 = restore_uint16(eng, out[b, 0], lo, hi, gain, ff_dark)  # (Y, X, Z')
+                u16 = restore_uint16(eng, out[b, 0], lo, hi, gain, ff_floor)  # (Y, X, Z')
                 zc0, xc0, yc0 = za * up - off_z, c * patch - off_x, r * patch - off_y
                 if arr is not None:
                     slab = np.ascontiguousarray(u16.transpose(2, 1, 0))  # (z, x, y)
