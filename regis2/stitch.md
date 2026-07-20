@@ -64,8 +64,13 @@ block mean, Blosc/zstd is lossless — none can create or darken a grid.
   structure, so patches straddling a boundary could bias phase-correlation
   toward zero (same family as the background fixed-pattern lock). Effect
   should be small (1-2% per-slice contrast).
-- **Possible cleanup:** the vignetting is stable and multiplicative — a
-  per-tile flat-field estimated from the mean image could divide it out.
+- **Cleanup (implemented):** `regis2/build_flatfield.py` estimates a
+  separable, grid-constrained gain field from the z-mean (in signal-above-
+  dark terms the bands are 10-22% deep, not 1-2% — the dark offset dilutes
+  them) and writes `flatfield.npz` at the codec root;
+  `inference/decode_stack.py --flatfield` divides it out at decode time
+  (`v -> dark + (v - dark) / G(x, y)`), leaving the VQ codes untouched.
+  Residual at well-covered grid lines < 1.2%.
 
 ## Figures (in `<out>/find_discont_thx10/`)
 
