@@ -77,7 +77,8 @@ def load_features(codec_dir):
     stems, per_scale = [], None
     for f in files:
         z = np.load(f)
-        scales = sorted(k for k in z.files if k.startswith('scale_'))
+        scales = sorted((k for k in z.files if k.startswith('scale_')),
+                        key=lambda k: int(k.split('_')[1]))
         if per_scale is None:
             per_scale = [[] for _ in scales]
         stems.append(os.path.splitext(os.path.basename(f))[0])

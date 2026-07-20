@@ -106,6 +106,17 @@ def load_model(ckpt_dir, epoch=None, device=None, model_file=None):
     )
     if not components:
         raise FileNotFoundError(f'No .pth files for epoch {epoch} in {ckpt_dir}')
+    all_names = set()
+    for f in glob.glob(os.path.join(ckpt_dir, '*_model_epoch_*.pth')):
+        m = re.match(r'(.+)_model_epoch_\d+\.pth$', os.path.basename(f))
+        if m:
+            all_names.add(m.group(1))
+    missing = all_names - set(components)
+    if missing:
+        raise FileNotFoundError(
+            f'Epoch {epoch} in {ckpt_dir} is missing component(s) '
+            f'{", ".join(sorted(missing))} — loading it would leave them at random '
+            f'init. Complete epochs: {available_epochs(ckpt_dir)}')
     for name in components:
         path = os.path.join(ckpt_dir, f'{name}_model_epoch_{epoch}.pth')
         # whole pickled nn.Modules (this repo's own artifacts), so the

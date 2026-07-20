@@ -85,8 +85,8 @@ def zarr_window(arr, z0, z1, lo_pct, hi_pct):
     assert arr.dtype.name == 'uint16', f'histogram window expects uint16, got {arr.dtype}'
     hist = np.zeros(65536, dtype=np.int64)
     _, X, _ = arr.shape
-    zc = 32
-    xc = 256
+    # slabs aligned to the store's own chunks, so each chunk decompresses once
+    zc, xc = (int(c) for c in arr.chunk_layout.read_chunk.shape[:2])
     t0 = time.perf_counter()
     for za in range(z0, z1, zc):
         for xa in range(0, X, xc):

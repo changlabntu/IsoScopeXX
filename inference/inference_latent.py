@@ -107,7 +107,8 @@ def main():
         codec = {f'scale_{k}': idx.cpu().numpy().astype(np.int32)
                  for k, idx in enumerate(indices)}
         np.savez_compressed(os.path.join(dirs['codec'], stem + '.npz'),
-                            meta=json.dumps({**meta, 'input_shape_zyx': vol.shape[::-1]}),
+                            meta=json.dumps({**meta, 'input_shape_zyx':
+                                             [vol.shape[2], vol.shape[0], vol.shape[1]]}),
                             **codec)
 
         # decode from the stored form, so codec/ alone reproduces decode/

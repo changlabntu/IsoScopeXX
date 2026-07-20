@@ -65,7 +65,7 @@ import torch.nn.functional as F  # noqa: E402
 from inference import Engine, available  # noqa: E402
 from inference.inference_latent import to_zx_pages  # noqa: E402
 
-CHUNK_RE = re.compile(r'^z(\d{4})-(\d{4})$')
+CHUNK_RE = re.compile(r'^z(\d{4,})-(\d{4,})$')
 
 
 def to_xy_pages(vol_yxz):
@@ -247,7 +247,11 @@ def main():
     else:
         off_z = off_x = off_y = 0
         shape = (z_full * up, W, H)
-    store_chunks = (min(np0['n_slices'] * up, shape[0]), patch, patch)  # = one decoded slab
+    # z chunk = the largest chunk-dir extent (not names[0]'s, which may be the
+    # short final chunk) so the store's chunking is the same no matter which
+    # chunk dir a run decodes first; short chunks write partial, aligned slabs
+    zc_max = max(zb - za for za, zb in (chunk_z_range(n) for n in all_names))
+    store_chunks = (min(zc_max * up, shape[0]), patch, patch)
 
     def make_store(path, what):
         from inference.zarr_io import create_zarr, write_ome_group
