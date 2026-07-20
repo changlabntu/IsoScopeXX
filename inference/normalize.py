@@ -27,6 +27,15 @@ def normalize(vol, nm, gamma=0.25, gamma_lo=-1.0, norm_stats=None, key=None):
         lo, hi = norm_stats[key]
         vol = ((vol - lo) / (hi - lo + 1e-8)).clip(0, 1) * 2 - 1
     elif nm == '11g':
+        # '11g' expects input already in [-1, 1]; raw counts saturate the clip
+        # to a constant +1 SILENTLY, so guard rather than return garbage (a
+        # forgotten window -> [-1, 1] step is the usual cause).
+        vlo, vhi = float(vol.min()), float(vol.max())
+        if vlo < -1.5 or vhi > 1.5:
+            raise ValueError(
+                f"nm='11g' input out of range [{vlo:.3g}, {vhi:.3g}]; it must "
+                "already be in [-1, 1]. Map raw values through the intensity "
+                "window first (e.g. clip((v - lo) / (hi - lo), 0, 1) * 2 - 1).")
         vol = ((vol - gamma_lo) / (1 - gamma_lo)).clip(0, 1)
         vol = vol ** gamma * 2 - 1
     elif nm != '00':
