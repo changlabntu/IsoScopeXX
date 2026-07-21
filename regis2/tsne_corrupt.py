@@ -47,10 +47,11 @@ DEFAULT_RAW = '/home/cheese/workspace/Data/thx10/roiAdsp4'
 DEFAULT_OUT = '/home/cheese/workspace/Output/regis2/tsne_corrupt10'
 
 
-def pool_latent(vol, spatial):
-    """(1, C, H, W, Z) latent -> mean over Z, adaptive-pool to spatial^2, flat.
-    Mirrors inference/latent_tsne.py load_latent_features with zpool='mean'."""
-    p = Fnn.adaptive_avg_pool2d(vol.float().mean(-1)[0], (spatial, spatial))
+def pool_latent(vol, spatial, zpool='mean'):
+    """(1, C, H, W, Z) latent -> mean/max over Z, adaptive-pool to spatial^2,
+    flat. Mirrors inference/latent_tsne.py load_latent_features."""
+    zp = vol.float().amax(-1) if zpool == 'max' else vol.float().mean(-1)
+    p = Fnn.adaptive_avg_pool2d(zp[0], (spatial, spatial))
     return p.flatten().cpu().numpy()
 
 
@@ -100,6 +101,10 @@ def main():
                              'invariant); jump = adjacent-slice phase-corr |t| '
                              '+ NCC stats; both = concat (blocks variance-'
                              'balanced). Non-default suffixes the outputs.')
+    parser.add_argument('--zpool', choices=('mean', 'max'), default='mean',
+                        help='Z pooling of the latent_mean content feature '
+                             '(latent_tsne --zpool). Non-default suffixes the '
+                             'outputs.')
     parser.add_argument('--spatial', type=int, default=8)
     parser.add_argument('--pca', type=int, default=50)
     parser.add_argument('--perplexity', type=float, default=30.0)
@@ -131,7 +136,7 @@ def main():
     def featurize(vol):
         parts = []
         if args.feat in ('latent_mean', 'both'):
-            parts.append(pool_latent(vol, args.spatial))
+            parts.append(pool_latent(vol, args.spatial, args.zpool))
         if args.feat in ('jump', 'both'):
             parts.append(jump_feature(vol))
         return np.concatenate(parts)
@@ -208,9 +213,11 @@ def main():
     corrupt_label = args.corrupt
     if args.corrupt == 'drift' and args.drift_scale != 1.0:
         corrupt_label += f'{args.drift_scale:g}'
+    feat_label = args.feat + ('' if args.zpool == 'mean' else f', z{args.zpool}')
     suffix = ('' if args.feat == 'latent_mean' else '_' + args.feat) \
+             + ('' if args.zpool == 'mean' else '_z' + args.zpool) \
              + ('' if args.corrupt == 'walk_drift' else '_' + corrupt_label)
-    ax.set_title(f't-SNE [{args.feat}] — skipU300, {args.frac:.0%} '
+    ax.set_title(f't-SNE [{feat_label}] — skipU300, {args.frac:.0%} '
                  f'{corrupt_label}-corrupted (green)\nprecision@{k}: {hits}/{k}')
     ax.legend(loc='best')
     ax.set_xticks([]), ax.set_yticks([])
@@ -259,7 +266,7 @@ def main():
                 bboxprops=dict(edgecolor=edge,
                                linewidth=2.0 if corrupt[i] or flags[i] else 0.8))
             ax.add_artist(ab)
-        ax.set_title(f't-SNE [{args.feat}] — {corrupt_label} corruption, Z-MIP '
+        ax.set_title(f't-SNE [{feat_label}] — {corrupt_label} corruption, Z-MIP '
                      'thumbnails (green border = corrupted, red = flagged)')
         ax.legend(loc='lower right')
         ax.set_xticks([]), ax.set_yticks([])

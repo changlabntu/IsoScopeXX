@@ -15,22 +15,16 @@ sample without any labels.
 Gathers every {stem}.npz written by inference/inference_latent.py (or
 encode_stack.py) in --codec, turns each material patch's codec into a feature
 (see --feat below), then:
-  - PCA -> t-SNE to 2D, scatter plot saved as {out_dir}/tsne{_feat}.png
-    (nearby dots = similar microstructure)
+  - PCA -> t-SNE to 2D (nearby dots = similar microstructure); the one figure
+    written is {out_dir}/tsne_thumbs{_feat}.png, which annotates ~--n_thumbs
+    dots (spread by farthest-point sampling, anomalies included) with
+    downsampled Z-MIP thumbnails of the corresponding material sub-volumes
+    (thumbnail source: the codec's recorded zarr, or a --thumbs tif dir)
   - IsolationForest on the PCA features flags anomalous patches (fraction
     set by --contamination) — candidate rare/defect microstructure regions,
-    drawn in red and labeled on the plot
+    drawn in red on the map
   - {out_dir}/anomalies{_feat}.csv lists the flagged patch names with their
     anomaly score (most anomalous first) and t-SNE coordinates
-  - when all stems are AAABBBCCC patch indices (AAA=Y, BBB=X, CCC=Z spatial
-    position of the patch inside the sample volume), a second figure
-    {out_dir}/tsne_grid{_feat}.png colors the same embedding by that position:
-    one RGB=(Y,X,Z) panel and one viridis panel per axis (well-mixed colors
-    mean patches cluster by microstructure, not by where they sit in the sample)
-  - with --thumbs <raw data dir>, a paper-style figure
-    {out_dir}/tsne_thumbs{_feat}.png annotates ~--n_thumbs dots (spread by
-    farthest-point sampling, anomalies included) with downsampled Z-MIP
-    thumbnails of the corresponding material sub-volumes
 
 Features (--feat): 'hist' (default) is the bag-of-codes histogram (per-scale
 codebook usage, L1-normalized, concatenated); 'hist_std'/'tfidf'/'hist_bal'
@@ -83,7 +77,7 @@ def gather_codecs(codec):
     before. A codec/ TREE (subdirs, each with npz — the z0000-0048 .. layout
     encode_stack writes) -> ONE combined set with 9-digit rrrcccZZZ stems, ZZZ
     the z-chunk ordinal (chunk dirs sorted = z order). The 9-digit form makes
-    the 3D (Y=rrr, X=ccc, Z=ZZZ) grid coloring and per-chunk thumbnails work,
+    per-chunk thumbnails work,
     so a whole-sample survey is one call on the codec/ root."""
     codec = os.path.abspath(codec.rstrip('/'))
     direct = sorted(glob(os.path.join(codec, '*.npz')))
@@ -161,7 +155,8 @@ def transform_hist(F, feat, blocks=None):
 
 
 def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
-                         model=None, epoch=None, device=None, half=False):
+                         scale=None, model=None, epoch=None, device=None,
+                         half=False, zwin=None):
     """Continuous latent features: rebuild each patch's quantized latent from
     the stored indices (Engine.latents_from_indices, no re-encode), pool over Z
     (max mirrors the MIP thumbnail; mean is smoother), then adaptive-pool the
@@ -171,8 +166,11 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
 
     per_scale=False sums the scales into one latent (one feature block);
     per_scale=True pools each scale separately and concatenates them, returning
-    per-scale blocks so the caller can weigh scales equally. Returns
-    (stems, features, blocks)."""
+    per-scale blocks so the caller can weigh scales equally; scale=k pools
+    ONLY that scale's contribution (0 = coarsest). zwin=w restricts the Z pool
+    to the central 2w+1 latent planes (latent Z is 1:1 with input slices), so
+    the feature describes the middle slice's neighbourhood instead of the whole
+    chunk; default None pools all of Z. Returns (stems, features, blocks)."""
     import torch
     import torch.nn.functional as Fnn
     from inference import Engine
@@ -187,6 +185,9 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
     zp = (lambda t: t.amax(-1)) if zpool == 'max' else (lambda t: t.mean(-1))
 
     def pool(vol):                                        # (1, C, H, W, Z) -> flat (C*s*s,)
+        if zwin is not None:
+            zc = vol.shape[-1] // 2
+            vol = vol[..., max(0, zc - zwin):zc + zwin + 1]
         p = Fnn.adaptive_avg_pool2d(zp(vol.float())[0], (spatial, spatial))
         return p.flatten().cpu().numpy()
 
@@ -199,7 +200,7 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
         lat = eng.latents_from_indices(idx)              # list of (1, C, H, W, Z)
         n_scales = len(lat)
         feats.append(np.concatenate([pool(L) for L in lat]) if per_scale
-                     else pool(sum(lat)))
+                     else pool(lat[scale] if scale is not None else sum(lat)))
         stems.append(stem)
     feats = np.stack(feats)
     if per_scale:
@@ -213,13 +214,17 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
 def build_features(args):
     """(stems, feature_matrix, label) for the requested --feat."""
     if args.feat == 'latent':
+        if args.scale is not None and args.balance_scales:
+            raise ValueError('--scale picks a single scale; drop --balance_scales')
         stems, feats, blocks = load_latent_features(
             args.codec, zpool=args.zpool, spatial=args.spatial,
-            per_scale=args.balance_scales, model=args.model, epoch=args.epoch,
-            device=args.device, half=args.half)
+            per_scale=args.balance_scales, scale=args.scale, model=args.model,
+            epoch=args.epoch, device=args.device, half=args.half, zwin=args.zwin)
+        zw = '' if args.zwin is None else f'_zw{args.zwin}'
         if args.balance_scales:
-            return stems, balance_scales(feats, blocks), f'latent_{args.zpool}_bal'
-        return stems, feats, f'latent_{args.zpool}'
+            return stems, balance_scales(feats, blocks), f'latent_{args.zpool}_bal{zw}'
+        return stems, feats, f'latent_{args.zpool}' \
+            + ('' if args.scale is None else f'_s{args.scale}') + zw
     stems, hist, blocks = load_features(args.codec)
     return stems, transform_hist(hist, args.feat, blocks), args.feat
 
@@ -274,10 +279,65 @@ def build_mip_thumb(args, stem_np0):
     return mip_thumb
 
 
+def build_overlays(stems, flags, stem_np0, out_dir, method, suffix):
+    """Per z-chunk, draw the flagged (red) + normal (grey) patch centres on that
+    chunk's MIDDLE slice, sourced from the codec's own zarr. One PNG per distinct
+    (source, z_range) group -> anomalies_overlay{suffix}[_z{za}-{zb}].png. Needs a
+    zarr-sourced codec with rrrccc[ZZZ] stems (same requirement as the zarr
+    thumbnails); a no-op with a note otherwise so the run still finishes."""
+    sample = next(iter(stem_np0.values()), {})
+    if 'zarr_level' not in sample or not all(re.fullmatch(r'\d{6}|\d{9}', s) for s in stem_np0):
+        print('overlay: needs a zarr-sourced codec with rrrccc[ZZZ] stems; skipping')
+        return
+    try:
+        from inference.zarr_io import open_zarr
+    except Exception as e:
+        print(f'overlay: cannot import zarr reader ({str(e).splitlines()[0]}); skipping')
+        return
+
+    groups = {}                                          # (source, level, za, zb) -> [i]
+    for i, s in enumerate(stems):
+        np0 = stem_np0[s]
+        za, zb = np0['z_range']
+        groups.setdefault((np0['source'], np0['zarr_level'], za, zb), []).append(i)
+    multi = len(groups) > 1
+    cache = {}
+    for (source, level, za, zb), idx in groups.items():
+        arr = cache.get((source, level)) or cache.setdefault((source, level),
+                                                             open_zarr(source, level))
+        zmid = (za + zb) // 2
+        sl = np.asarray(arr[zmid].read().result()).T.astype(np.float32)   # (x,y)->(Y,X)
+        ds = max(1, max(sl.shape) // 3000)               # cap long side ~3000 px
+        sl = sl[::ds, ::ds]
+        lo, hi = np.percentile(sl, 1), np.percentile(sl, 99.5)
+        patch = stem_np0[stems[idx[0]]]['patch']
+        xs = np.array([(int(stems[i][3:6]) + 0.5) * patch / ds for i in idx])
+        ys = np.array([(int(stems[i][:3]) + 0.5) * patch / ds for i in idx])
+        fl = np.array([flags[i] for i in idx], bool)
+
+        fig, ax = plt.subplots(figsize=(16, 16 * sl.shape[0] / sl.shape[1]))
+        ax.imshow(sl, cmap='gray', vmin=lo, vmax=hi, interpolation='nearest')
+        ax.scatter(xs[~fl], ys[~fl], s=16, c='#9ab5e0', alpha=0.5, linewidths=0,
+                   zorder=2, label=f'normal ({(~fl).sum()})')
+        ax.scatter(xs[fl], ys[fl], s=70, c='red', edgecolors='white', linewidths=0.8,
+                   zorder=3, label=f'anomaly ({fl.sum()})')
+        ax.set_title(f'{os.path.basename(out_dir)} [{method}{suffix}] — patch centres '
+                     f'on z={zmid} (mid of {za}-{zb})')
+        ax.legend(loc='lower right')
+        ax.set_xticks([]), ax.set_yticks([])
+        fig.tight_layout()
+        tag = f'_z{za:04d}-{zb:04d}' if multi else ''
+        png = os.path.join(out_dir, f'anomalies_overlay{suffix}{tag}.png')
+        fig.savefig(png, dpi=150)
+        plt.close(fig)
+        print(f'overlay -> {png}')
+
+
 def run(codec, out_dir=None, contamination=0.05, reducer='tsne', perplexity=30.0,
         n_neighbors=15, min_dist=0.1, umap_trim=0.0, pca=50, seed=0, thumbs=None,
         no_thumbs=False, n_thumbs=48, thumb_px=56, feat='hist', zpool='max', spatial=8,
-        model=None, epoch=None, device=None, half=False, balance_scales=False):
+        model=None, epoch=None, device=None, half=False, balance_scales=False,
+        zwin=None):
     """The whole pipeline as a callable (used by encode_stack.py --tsne)."""
     args = argparse.Namespace(codec=codec, out_dir=out_dir, contamination=contamination,
                               reducer=reducer, perplexity=perplexity, n_neighbors=n_neighbors,
@@ -285,7 +345,7 @@ def run(codec, out_dir=None, contamination=0.05, reducer='tsne', perplexity=30.0
                               thumbs=thumbs, no_thumbs=no_thumbs, n_thumbs=n_thumbs,
                               thumb_px=thumb_px, feat=feat, zpool=zpool, spatial=spatial,
                               model=model, epoch=epoch, device=device, half=half,
-                              balance_scales=balance_scales)
+                              balance_scales=balance_scales, zwin=zwin)
     _run(args)
 
 
@@ -339,6 +399,14 @@ def main():
                              'variance (all scales weigh equally) instead of summing them')
     parser.add_argument('--zpool', choices=('mean', 'max'), default='max',
                         help='latent feat: pool the latent over Z (default max, mirrors the MIP thumbnail)')
+    parser.add_argument('--zwin', type=int, default=None,
+                        help='latent feat: pool only the central 2w+1 latent Z planes '
+                             '(latent Z = input slices), so the feature matches the '
+                             'middle slice instead of the whole chunk; default all of Z. '
+                             'Non-default suffixes outputs (_zw{w}).')
+    parser.add_argument('--scale', type=int, default=None,
+                        help='latent feat: pool only this residual scale '
+                             '(0 = coarsest); default sums all scales')
     parser.add_argument('--spatial', type=int, default=8,
                         help='latent feat: adaptive-pool the H x W plane to this grid (default 8)')
     parser.add_argument('--model', default=None,
@@ -370,6 +438,7 @@ def _run(args):
     iso = IsolationForest(contamination=args.contamination, random_state=args.seed)
     flags = iso.fit_predict(X) == -1                 # True = anomaly
     scores = iso.score_samples(X)                    # lower = more anomalous
+    stems_all, flags_all = list(stems), flags.copy()  # pre-trim, for the slice overlay
 
     if method == 'umap':
         import umap
@@ -396,64 +465,6 @@ def _run(args):
         emb, stems = emb[keep], [s for s, k in zip(stems, keep) if k]
         flags, scores, n = flags[keep], scores[keep], int(keep.sum())
 
-    fig, ax = plt.subplots(figsize=(9, 8))
-    ax.scatter(emb[~flags, 0], emb[~flags, 1], s=18, c='#4878cf', alpha=0.7,
-               linewidths=0, label=f'normal ({(~flags).sum()})')
-    ax.scatter(emb[flags, 0], emb[flags, 1], s=42, c='red', marker='o',
-               edgecolors='darkred', linewidths=0.5, label=f'anomaly ({flags.sum()})')
-    for i in np.where(flags)[0]:
-        ax.annotate(stems[i], (emb[i, 0], emb[i, 1]), fontsize=6, color='darkred',
-                    xytext=(3, 3), textcoords='offset points')
-    ax.set_title(f'{mlabel} [{label}] — {os.path.basename(out_dir)} '
-                 f'(n={n}, contamination={args.contamination})')
-    ax.legend(loc='best')
-    ax.set_xticks([]), ax.set_yticks([])
-    fig.tight_layout()
-    png = os.path.join(out_dir, f'{method}{suffix}.png')
-    fig.savefig(png, dpi=200)
-    plt.close(fig)
-
-    # grid-coordinate coloring: 9-digit AAABBBCCC stems (AAA=Y, BBB=X, CCC=Z,
-    # the roiAdsp4 3D patch grid) or 6-digit rrrccc stems (row/col slice grid
-    # from inference/encode_stack.py)
-    axis_names = None
-    if all(re.fullmatch(r'\d{9}', s) for s in stems):
-        axis_names = ['Y (AAA)', 'X (BBB)', 'Z (CCC)']
-    elif all(re.fullmatch(r'\d{6}', s) for s in stems):
-        axis_names = ['row (rrr)', 'col (ccc)']
-    if axis_names:
-        nd = len(axis_names)
-        grid = np.array([[int(s[3 * k:3 * k + 3]) for k in range(nd)] for s in stems], float)
-        frac = grid / np.maximum(grid.max(axis=0), 1)          # per-axis 0..1
-        rgb = frac if nd == 3 else np.column_stack([frac, np.full(len(stems), 0.5)])
-        fig, axes = plt.subplots(2, 2, figsize=(15, 13))
-        hi = grid.max(axis=0).astype(int)
-        panels = [(f'RGB = ({", ".join(a.split()[0] for a in axis_names)})', rgb, None, None)]
-        panels += [(f'{axis_names[k]}, 0-{hi[k]}', frac[:, k], 'viridis', hi[k])
-                   for k in range(nd)]
-        for ax in axes.ravel()[len(panels):]:
-            ax.axis('off')
-        for ax, (title, c, cmap, top) in zip(axes.ravel(), panels):
-            sc = ax.scatter(emb[:, 0], emb[:, 1], s=22, c=c, cmap=cmap,
-                            alpha=0.85, linewidths=0)
-            ax.scatter(emb[flags, 0], emb[flags, 1], s=70, facecolors='none',
-                       edgecolors='red', linewidths=1.2,
-                       label=f'anomaly ({flags.sum()})')
-            if cmap is not None:
-                cb = fig.colorbar(sc, ax=ax, fraction=0.04, pad=0.02)
-                cb.set_ticks([0, 1])
-                cb.set_ticklabels(['0', str(top)])
-            ax.set_title(title)
-            ax.set_xticks([]), ax.set_yticks([])
-        axes[0, 0].legend(loc='best')
-        fig.suptitle(f'{mlabel} [{label}] colored by patch grid position — '
-                     f'{os.path.basename(out_dir)}', y=0.995)
-        fig.tight_layout()
-        grid_png = os.path.join(out_dir, f'{method}_grid{suffix}.png')
-        fig.savefig(grid_png, dpi=200)
-        plt.close(fig)
-        print(f'grid-colored plot -> {grid_png}')
-
     stem_np0 = {stem: np0 for stem, _, np0 in gather_codecs(args.codec)}
     thumb_fn = None if args.no_thumbs else build_mip_thumb(args, stem_np0)
     if thumb_fn is not None:
@@ -469,16 +480,19 @@ def _run(args):
 
         from matplotlib.offsetbox import AnnotationBbox, OffsetImage
         fig, ax = plt.subplots(figsize=(13, 11))
+        # dots ABOVE the thumbnails (zorder), so flags stay visible where
+        # thumbnails crowd the map
         ax.scatter(emb[~flags, 0], emb[~flags, 1], s=14, c='#9ab5e0', alpha=0.6,
-                   linewidths=0, label=f'normal ({(~flags).sum()})')
+                   linewidths=0, label=f'normal ({(~flags).sum()})', zorder=3)
         ax.scatter(emb[flags, 0], emb[flags, 1], s=26, c='red', alpha=0.9,
-                   linewidths=0, label=f'anomaly ({flags.sum()})')
+                   linewidths=0, label=f'anomaly ({flags.sum()})', zorder=4)
         for i in chosen:
             ab = AnnotationBbox(
                 OffsetImage(thumb_fn(stems[i]), cmap='gray', zoom=1.0),
                 (emb[i, 0], emb[i, 1]), frameon=True, pad=0.15,
                 bboxprops=dict(edgecolor='red' if flags[i] else '#666666',
                                linewidth=1.6 if flags[i] else 0.8))
+            ab.set_zorder(2)
             ax.add_artist(ab)
         ax.set_title(f'{mlabel} [{label}] — {os.path.basename(out_dir)} '
                      f'(Z-MIP thumbnails on {n_th} farthest-point dots)')
@@ -493,6 +507,8 @@ def _run(args):
         plt.close(fig)
         print(f'thumbnail plot -> {thumbs_png}')
 
+        build_overlays(stems_all, flags_all, stem_np0, out_dir, method, suffix)
+
     order = np.argsort(scores)                       # most anomalous first
     csv_path = os.path.join(out_dir, f'anomalies_{method}{suffix}.csv')
     with open(csv_path, 'w', newline='') as f:
@@ -503,7 +519,6 @@ def _run(args):
                 w.writerow([stems[i], f'{scores[i]:.4f}', f'{emb[i, 0]:.2f}', f'{emb[i, 1]:.2f}'])
 
     print(f'{flags.sum()} anomalies -> {csv_path}')
-    print(f'plot -> {png}')
     for i in order[:min(10, flags.sum())]:
         print(f'  {stems[i]}  score {scores[i]:.4f}')
 
