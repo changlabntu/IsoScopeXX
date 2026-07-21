@@ -27,10 +27,6 @@ damaged.
 - **`tsne_corrupt.py`** — the skipU300 latent-t-SNE survey with a random
   `--frac` of patches corrupted before encoding, marked green
   (`--feat latent_mean|jump|both`, `--corrupt`, `--drift_scale`, `--thumbs`).
-- **`build_flatfield.py`** — de-striping: estimates the stitch-tile
-  vignetting gain field of a codec's source zarr (see `stitch.md`) into
-  `{codec_root}/flatfield.npz`, consumed by `inference/decode_stack.py
-  --flatfield`.
 
 ## Corruption scenarios (per-slice similarity transforms)
 
