@@ -1,0 +1,12 @@
+# fill `name` per cluster; same name merges clusters; blank or junk drops it
+# v0b (parent v0, k=4 within fiber). PROVISIONAL names — rename freely:
+#   c0 bright granular matrix, rounded dark bodies / membrane arcs
+#   c1 thin beaded strands + puncta on dark ground
+#   c2 thicker curvy strands, denser fiber web
+#   c3 faint sparse fragments / diffuse haze
+# (vs v0a: v0a fiber-distinct ~ c1+c2 here; in-matrix ~ c0; sparse ~ c3)
+cluster,count,name
+0,23499,fiber-in-matrix
+1,34238,fiber-beaded-thin
+2,38210,fiber-thick-web
+3,38104,fiber-faint-sparse

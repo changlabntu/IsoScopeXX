@@ -1,0 +1,48 @@
+{
+  "v0": {
+    "classes": {
+      "0": "fiber-network",
+      "1": "junk",
+      "2": "junk",
+      "3": "junk",
+      "4": "junk",
+      "5": "junk",
+      "6": "junk",
+      "7": "fiber-punctate"
+    },
+    "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw3_0c303b83b7_k8.npz",
+    "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw3_0c303b83b7.npz",
+    "k": 8,
+    "keep": [
+      0,
+      7
+    ],
+    "note": "round 1: fiber (c0 network + c7 punctate) vs background; map_only0-7 is the v0 map",
+    "parent": null
+  },
+  "v0a": {
+    "classes": {
+      "0": "c0",
+      "1": "c1",
+      "2": "c2"
+    },
+    "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw3_0c303b83b7_k3_v0a.npz",
+    "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw3_0c303b83b7.npz",
+    "k": 3,
+    "keep": null,
+    "parent": "v0"
+  },
+  "v0b": {
+    "classes": {
+      "0": "c0",
+      "1": "c1",
+      "2": "c2",
+      "3": "c3"
+    },
+    "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw3_0c303b83b7_k4_v0b.npz",
+    "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw3_0c303b83b7.npz",
+    "k": 4,
+    "keep": null,
+    "parent": "v0"
+  }
+}

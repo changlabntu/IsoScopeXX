@@ -130,6 +130,9 @@ def main():
                     required=True)
     ap.add_argument('--clusters', default=None,
                     help='clusters_{...}.npz (required for clusters mode)')
+    ap.add_argument('--only', default=None,
+                    help='clusters mode: draw only these cluster ids '
+                         '(comma-separated, e.g. 0,7); npy is filtered too')
     ap.add_argument('--smooth', type=int, default=0,
                     help='umap mode: average embeddings over the (2N+1)^2 '
                          'cell neighbourhood before coloring')
@@ -149,10 +152,18 @@ def main():
             sys.exit('--mode clusters needs --clusters clusters_{...}.npz')
         z, meta, names = load_cluster_rows(args.clusters)
         cell_px = int(meta.get('cell_px', common.CELL))
-        name = args.name or f'{meta["name"]}_map'
         lab_arr, dist = z['label'].astype(int), z['dist']
         ch, st = z['chunk'].astype(str), z['stem'].astype(str)
         cr, cc = z['cell_row'], z['cell_col']
+        only_tag = ''
+        if args.only:
+            ids = sorted({int(x) for x in args.only.split(',')})
+            m = np.isin(lab_arr, ids)
+            lab_arr, dist = lab_arr[m], dist[m]
+            ch, st, cr, cc = ch[m], st[m], cr[m], cc[m]
+            only_tag = '_only' + '-'.join(str(i) for i in ids)
+            print(f'--only {ids}: kept {m.sum()} cells', flush=True)
+        name = args.name or f'{meta["name"]}_map{only_tag}'
         rgbs = CLUSTER_HUES_FULL[lab_arr % len(CLUSTER_HUES_FULL)]
         emb = np.stack([lab_arr.astype(np.float32), dist,
                         np.zeros(len(lab_arr), np.float32)], 1)

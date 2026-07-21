@@ -1,19 +1,14 @@
 # fill `name` per cluster; same name merges clusters; blank or junk drops it
-# PROVISIONAL names from Claude's read of the montage (2026-07-22) — rename freely:
-#   c0 bright filament/membrane network over dark ground
-#   c1 dense bright speckle matrix
-#   c2 dimmer fine speckle field
-#   c3 wispy diffuse / cloudy texture
-#   c4 dark regions with bright laminar streaks
-#   c5 rounded compact granules with bright rims
-#   c6 MIXED: pure noise-static crops + bright curved arcs — consider `junk`
-#   c7 sparse bright puncta / dashed filaments
+# 2026-07-22 user call: only c0 and c7 are meaningful material FIBER;
+# the other six clusters are noise/background -> junk.
+# (previous provisional names: c1 dense-speckle, c2 dim-speckle,
+#  c3 wispy-diffuse, c4 dark-laminar, c5 granule-field, c6 noisy-arcs)
 cluster,count,name
-0,66424,boundary-network
-1,80368,dense-speckle
-2,32023,dim-speckle
-3,73198,wispy-diffuse
-4,32330,dark-laminar
-5,47561,granule-field
-6,30381,noisy-arcs
-7,67627,punctate
+0,66424,fiber-network
+1,80368,junk
+2,32023,junk
+3,73198,junk
+4,32330,junk
+5,47561,junk
+6,30381,junk
+7,67627,fiber-punctate

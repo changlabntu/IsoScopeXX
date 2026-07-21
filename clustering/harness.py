@@ -159,6 +159,103 @@ def anchors(args):
     write_anchors(args.anchors, rows)
 
 
+# ------------------------------------------------------------------ versions
+
+VERSIONS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'versions.json')
+
+
+def load_versions():
+    if os.path.exists(VERSIONS_JSON):
+        with open(VERSIONS_JSON) as f:
+            return json.load(f)
+    return {}
+
+
+def save_versions(reg):
+    with open(VERSIONS_JSON, 'w') as f:
+        json.dump(reg, f, indent=2, sort_keys=True)
+
+
+def child_name(reg, parent):
+    for suffix in 'abcdefghijklmnopqrstuvwxyz':
+        cand = parent + suffix
+        if cand not in reg:
+            return cand
+    raise RuntimeError(f'no free child name under {parent}')
+
+
+def cluster_names_csv(clusters_npz):
+    """The names csv belonging to a clusters npz (may not exist yet)."""
+    meta = json.loads(str(np.load(clusters_npz, allow_pickle=False)['meta']))
+    return meta, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              f'{meta["name"]}_names.csv')
+
+
+def read_names_csv(path, k):
+    names = {}
+    if os.path.exists(path):
+        with open(path) as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln or ln.startswith('#') or ln.startswith('cluster,'):
+                    continue
+                parts = [p.strip() for p in ln.split(',')]
+                if len(parts) >= 3 and parts[2]:
+                    names[int(parts[0])] = parts[2]
+    return {i: names.get(i, f'c{i}') for i in range(k)}
+
+
+def version_cmd(args):
+    """`version save --name v0 --clusters X.npz [--keep 0,7] [--note ...]`
+    freezes a cluster round (upserts); `version list` prints the lineage."""
+    reg = load_versions()
+    if args.action == 'list':
+        if not reg:
+            sys.exit('no versions yet — harness.py version save --name v0 '
+                     '--clusters <npz> [--keep ids]')
+        roots = sorted(n for n, v in reg.items() if not v.get('parent'))
+        def show(n, depth):
+            v = reg[n]
+            keep = v.get('keep')
+            cls = v.get('classes', {})
+            kept = ('all' if keep is None else
+                    ', '.join(f'{i}:{cls.get(str(i), "c%d" % i)}'
+                              for i in keep))
+            print(f'{"  " * depth}{n}: k={v.get("k")} keep=[{kept}] '
+                  f'{os.path.basename(v["clusters"])}'
+                  + (f'  — {v["note"]}' if v.get('note') else ''))
+            for c in sorted(cn for cn, cv in reg.items()
+                            if cv.get('parent') == n):
+                show(c, depth + 1)
+        for r in roots:
+            show(r, 0)
+        return
+    # save / upsert
+    if not (args.name and args.clusters):
+        sys.exit('version save needs --name and --clusters')
+    meta, names_csv = cluster_names_csv(args.clusters)
+    names = read_names_csv(names_csv, int(meta['k']))
+    keep = ([int(x) for x in args.keep.split(',')] if args.keep
+            else reg.get(args.name, {}).get('keep'))
+    entry = dict(reg.get(args.name, {}))
+    entry.update({
+        'parent': args.parent if args.parent else entry.get('parent'),
+        'clusters': os.path.abspath(args.clusters),
+        'k': int(meta['k']), 'keep': keep,
+        'classes': {str(i): n for i, n in names.items()},
+        'feat': meta.get('feat')})
+    if args.note:
+        entry['note'] = args.note
+    reg[args.name] = entry
+    save_versions(reg)
+    kept = ('all' if keep is None else
+            ', '.join(f'{i}:{names[i]}' for i in keep))
+    print(f'{args.name}: k={entry["k"]} keep=[{kept}]  '
+          f'({os.path.basename(args.clusters)}) saved to versions.json',
+          flush=True)
+
+
 # ---------------------------------------------------------------- cluster-then-name
 
 CLUSTER_HUES = np.array(
@@ -181,21 +278,62 @@ def _norm_crop(img):
 
 def cluster(args):
     """K-means over gated cells + per-cluster raw-crop montages, so the
-    labeling session shrinks to naming ~k clusters from one figure."""
+    labeling session shrinks to naming ~k clusters from one figure.
+
+    --within CLUSTERS.npz --keep 0,7 restricts to cells a previous cluster
+    run assigned to the listed ids — hierarchical refinement: once a round
+    separates material from background, the next round spends all its
+    capacity inside the material."""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from sklearn.cluster import MiniBatchKMeans
+    version = None
+    if args.from_v:
+        reg = load_versions()
+        if args.from_v not in reg:
+            sys.exit(f'unknown version {args.from_v} — see harness.py '
+                     'version list')
+        parent = reg[args.from_v]
+        if parent.get('keep') is None:
+            sys.exit(f'{args.from_v} has keep=all — set the kept classes '
+                     f'first: version save --name {args.from_v} --clusters '
+                     f'{parent["clusters"]} --keep <ids>')
+        args.within = parent['clusters']
+        args.keep = ','.join(str(i) for i in parent['keep'])
+        version = child_name(reg, args.from_v)
+        args.tag = args.tag or version
+        print(f'refining {args.from_v} (keep {args.keep}) -> {version}',
+              flush=True)
     fs = common.load_feature_set(args.feat)
     cell_px = int(fs.meta.get('cell_px', common.CELL))
     base = fs.meta.get('name') or os.path.splitext(os.path.basename(args.feat))[0]
-    name = f'clusters_{base}_k{args.k}'
+    tag = f'_{args.tag}' if args.tag else ''
+    name = f'clusters_{base}_k{args.k}{tag}'
     keep = common.row_gate(fs, args.codec, cell_px, args.gate_k)
     print(f'gate kept {keep.sum()}/{len(keep)} cells (k={args.gate_k})',
           flush=True)
     F = fs.feat[keep]
     ch, st = fs.chunk[keep], fs.stem[keep]
     cr, cc = fs.cell_row[keep], fs.cell_col[keep]
+    if args.within:
+        if not args.keep:
+            sys.exit('--within needs --keep <cluster ids, e.g. 0,7>')
+        wz = np.load(args.within, allow_pickle=False)
+        keep_ids = {int(x) for x in args.keep.split(',')}
+        wanted = {(c, s, int(r), int(q))
+                  for c, s, r, q, l in zip(wz['chunk'].astype(str),
+                                           wz['stem'].astype(str),
+                                           wz['cell_row'], wz['cell_col'],
+                                           wz['label'])
+                  if int(l) in keep_ids}
+        sub = np.array([(c, s, int(r), int(q)) in wanted
+                        for c, s, r, q in zip(ch, st, cr, cc)])
+        F, ch, st = F[sub], ch[sub], st[sub]
+        cr, cc = cr[sub], cc[sub]
+        print(f'--within kept {sub.sum()} cells (prev clusters '
+              f'{sorted(keep_ids)} of {os.path.basename(args.within)})',
+              flush=True)
     km = MiniBatchKMeans(n_clusters=args.k, random_state=0, n_init=10,
                          batch_size=4096, max_iter=300).fit(F)
     lab = km.labels_
@@ -211,8 +349,20 @@ def cluster(args):
         centers=km.cluster_centers_.astype(np.float32),
         meta=json.dumps({'name': name, 'feat': os.path.abspath(args.feat),
                          'feat_name': base, 'k': args.k,
-                         'gate_k': args.gate_k, 'cell_px': cell_px}))
+                         'gate_k': args.gate_k, 'cell_px': cell_px,
+                         'within': args.within and os.path.abspath(args.within),
+                         'keep': args.keep}))
     print(f'wrote {npz}', flush=True)
+    if version:
+        reg = load_versions()
+        reg[version] = {'parent': args.from_v, 'clusters': os.path.abspath(npz),
+                        'k': args.k, 'keep': None,
+                        'classes': {str(i): f'c{i}' for i in range(args.k)},
+                        'feat': os.path.abspath(args.feat)}
+        save_versions(reg)
+        print(f'registered version {version} (parent {args.from_v}); after '
+              f'review: version save --name {version} --clusters {npz} '
+              f'--keep <ids>', flush=True)
 
     # --- montages: per cluster, nearest-to-centroid members, chunk-diverse ---
     fig_dir = os.path.join(common.OUT, name)
@@ -620,6 +770,25 @@ def main():
                    help='crops per cluster row in the combined montage')
     s.add_argument('--crop', type=int, default=160,
                    help='crop size (px) around each cell centre')
+    s.add_argument('--within', default=None,
+                   help='clusters_{...}.npz of a previous round: only cells '
+                        'it assigned to --keep ids are re-clustered')
+    s.add_argument('--keep', default=None,
+                   help='comma-separated cluster ids kept from --within')
+    s.add_argument('--tag', default=None,
+                   help='suffix for the output name (e.g. fiber)')
+    s.add_argument('--from', dest='from_v', default=None,
+                   help='refine a registered version (versions.json): sets '
+                        '--within/--keep from it and auto-names the child '
+                        '(v0 -> v0a)')
+    s = sub.add_parser('version')
+    s.add_argument('action', choices=('save', 'list'))
+    s.add_argument('--name', default=None)
+    s.add_argument('--clusters', default=None)
+    s.add_argument('--keep', default=None,
+                   help='class ids that carry to the next refinement')
+    s.add_argument('--parent', default=None)
+    s.add_argument('--note', default=None)
     s = sub.add_parser('names2anchors')
     s.add_argument('--clusters', required=True,
                    help='clusters_{...}.npz written by the cluster subcommand')
@@ -643,7 +812,7 @@ def main():
     args = ap.parse_args()
     {'make_sheets': make_sheets, 'anchors': anchors, 'cluster': cluster,
      'names2anchors': names2anchors, 'eval': eval_features,
-     'report': report}[args.cmd](args)
+     'report': report, 'version': version_cmd}[args.cmd](args)
 
 
 if __name__ == '__main__':
