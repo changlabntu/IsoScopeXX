@@ -25,6 +25,11 @@ Intensity: raw uint16 -> [-1, 1] by a robust percentile window of the loaded
 ROI (or a fixed --window LO HI, e.g. sample0's global 99 495). The model's
 '11g' normalization is NOT applied here — features.py applies it; these
 volumes stay model-free.
+
+Besides the CLI, this module hosts the corruption-model generators shared by
+the round-2 experiment drivers (experiments/): sample_transforms (similarity
+random walk — the CLI's model), chunk_transforms (one inter-chunk tear),
+drift_transforms (smooth sinusoid), plus the apply/upz warp helpers.
 """
 
 import argparse
@@ -41,11 +46,13 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
+import torch.nn.functional as F  # noqa: E402
 
 from registration import affine  # noqa: E402
 
 DEFAULT_ZARR = '/media/cheese/Ghc_data3/THX10/sample0_crop_ome.zarr'
 DEFAULT_OUT_BASE = '/home/cheese/workspace/Output/registration'
+UP = 8
 
 
 def sample_transforms(nz, rot, trans, scale, seed):
@@ -61,6 +68,49 @@ def sample_transforms(nz, rot, trans, scale, seed):
     for p in rel[1:]:
         abs_mats.append(affine.compose(affine.params_to_mat(*p), abs_mats[-1]))
     return rel, abs_mats
+
+
+def chunk_transforms(nz, rot=1.0, trans=6.0, scale=0.01, seed=0,
+                     breaks=(1 / 3, 2 / 3)):
+    """Single chunk-boundary step: identity up to a break slice (nz * a random
+    choice of `breaks`), then ONE constant similarity drawn from the walk-step
+    distribution (walk_big magnitudes by default) for every later slice —
+    mimics inter-chunk drift in chunked acquisition. Returns (mats, break_z)."""
+    rng = np.random.default_rng(seed)
+    zb = int(round(nz * rng.choice(breaks)))
+    m = affine.params_to_mat(rng.uniform(-rot, rot),
+                             rng.uniform(-trans, trans),
+                             rng.uniform(-trans, trans),
+                             1.0 + rng.uniform(-scale, scale))
+    return np.stack([affine.identity()] * zb + [m] * (nz - zb)), zb
+
+
+def drift_transforms(nz, amp=10.0, rot=1.0, cycles=1.0):
+    """Smooth deterministic drift: sinusoidal translation + rotation."""
+    z = np.arange(nz) / max(nz - 1, 1)
+    mats = [affine.params_to_mat(rot * np.sin(2 * np.pi * cycles * zi),
+                                 amp * np.sin(2 * np.pi * cycles * zi),
+                                 amp * (1 - np.cos(2 * np.pi * cycles * zi)) / 2,
+                                 1.0)
+            for zi in z]
+    mats[0] = affine.identity()
+    return np.stack(mats)
+
+
+def apply(vol, mats, device):
+    """Warp a (Z, Y, X) volume by per-slice forward mats (bicubic, fill -1)."""
+    t = torch.from_numpy(vol)[:, None].to(device)
+    with torch.no_grad():
+        w = affine.warp_slices(t, mats, mode='bicubic', fill=-1.0)
+    return w[:, 0].cpu().numpy()
+
+
+def upz(vol):
+    """Trilinear UP-x upsample of a (Z, Y, X) volume along Z."""
+    t = torch.from_numpy(np.ascontiguousarray(vol))[None, None].float()
+    out = F.interpolate(t, size=(vol.shape[0] * UP, vol.shape[1], vol.shape[2]),
+                        mode='trilinear', align_corners=False)
+    return out[0, 0].numpy()
 
 
 def max_corner_displacement(abs_mats, size):

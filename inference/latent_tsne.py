@@ -154,6 +154,20 @@ def transform_hist(F, feat, blocks=None):
     raise ValueError(f"unknown hist transform '{feat}'")
 
 
+def pool_latent(vol, spatial=8, zpool='mean', zwin=None):
+    """(1, C, H, W, Z) latent -> max/mean pool over Z (zwin=w restricts to the
+    central 2w+1 planes), adaptive-pool the H x W plane to spatial^2, flatten
+    to numpy. The pooling core of load_latent_features, shared with
+    registration/experiments/tsne_corrupt.py."""
+    import torch.nn.functional as Fnn
+    if zwin is not None:
+        zc = vol.shape[-1] // 2
+        vol = vol[..., max(0, zc - zwin):zc + zwin + 1]
+    zp = vol.float().amax(-1) if zpool == 'max' else vol.float().mean(-1)
+    p = Fnn.adaptive_avg_pool2d(zp[0], (spatial, spatial))
+    return p.flatten().cpu().numpy()
+
+
 def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
                          scale=None, model=None, epoch=None, device=None,
                          half=False, zwin=None):
@@ -172,7 +186,6 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
     the feature describes the middle slice's neighbourhood instead of the whole
     chunk; default None pools all of Z. Returns (stems, features, blocks)."""
     import torch
-    import torch.nn.functional as Fnn
     from inference import Engine
     recs = gather_codecs(codec_dir)
     if model is None:
@@ -182,14 +195,8 @@ def load_latent_features(codec_dir, zpool='max', spatial=8, per_scale=False,
     eng = Engine.from_registry(model, epoch=epoch, device=device)
     if half:
         eng.gan.half()
-    zp = (lambda t: t.amax(-1)) if zpool == 'max' else (lambda t: t.mean(-1))
-
     def pool(vol):                                        # (1, C, H, W, Z) -> flat (C*s*s,)
-        if zwin is not None:
-            zc = vol.shape[-1] // 2
-            vol = vol[..., max(0, zc - zwin):zc + zwin + 1]
-        p = Fnn.adaptive_avg_pool2d(zp(vol.float())[0], (spatial, spatial))
-        return p.flatten().cpu().numpy()
+        return pool_latent(vol, spatial=spatial, zpool=zpool, zwin=zwin)
 
     stems, feats, n_scales = [], [], None
     for stem, f, _ in recs:

@@ -1,6 +1,6 @@
 """Measure global per-slice drift across a whole-volume chunked codec.
 
-    CUDA_VISIBLE_DEVICES=0 python regis2/measure_drift.py \
+    CUDA_VISIBLE_DEVICES=0 python registration/measure_drift.py \
         --codec /media/cheese/Ghc_data3/THX10/thx10codec/codec
 
 Complement to find_discont.py: that screen looks for sparse per-patch SPIKES
@@ -59,7 +59,7 @@ import torch  # noqa: E402
 
 from registration import features  # noqa: E402
 from registration.register import phase_corr_shift  # noqa: E402
-from regis2.find_discont import discover, load_planes, STRIDE  # noqa: E402
+from registration.find_discont import discover, load_planes, STRIDE  # noqa: E402
 
 
 def main():

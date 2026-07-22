@@ -106,6 +106,41 @@ def warp_slices(imgs, mats_or_theta, mode='bilinear', fill=0.0, is_theta=False):
 
 # ------------------------------------------------------------- global solves
 
+def _data_rows(measurements, n, lin_scale=1.0):
+    """Pairwise-measurement least-squares rows over the unknowns M_1..M_{n-1}
+    (6 entries each, gauge M_0 = I). Each (i, j, D) contributes the 6 linear
+    equations of M_j = D o M_i (entry (r, c) of M_j equals
+    sum_k A_D[r,k] M_i[k,c], + t_D[r] for c=2). Shared by solve_graph and
+    graph_tv.solve_graph_tv.
+
+    lin_scale > 1 rescales the linear-entry equations (c != 2 — they involve
+    only rot/scale unknowns) into px-equivalents. Solvers with px-denominated
+    penalties (graph_tv) need this: without it, data support for rotation is
+    ~lin_scale x weaker than any px-denominated penalty and the prior flattens
+    every rotation regardless of lambda. Returns (rows, rhs) lists."""
+    ident = identity().reshape(-1)
+    rows, rhs = [], []
+    for i, j, D in measurements:
+        A_D, t_D = np.asarray(D)[:, :2], np.asarray(D)[:, 2]
+        for r in range(2):
+            for c in range(3):
+                s = 1.0 if c == 2 else lin_scale
+                row = np.zeros(6 * (n - 1))
+                b = t_D[r] if c == 2 else 0.0
+                if j == 0:
+                    b -= ident[3 * r + c]
+                else:
+                    row[6 * (j - 1) + 3 * r + c] = s
+                for k in range(2):
+                    if i == 0:
+                        b += A_D[r, k] * ident[3 * k + c]
+                    else:
+                        row[6 * (i - 1) + 3 * k + c] -= A_D[r, k] * s
+                rows.append(row)
+                rhs.append(b * s)
+    return rows, rhs
+
+
 def solve_graph(measurements, n, anchor=0.0, px_scale=100.0):
     """Least-squares absolute transforms from pairwise measurements.
 
@@ -124,29 +159,8 @@ def solve_graph(measurements, n, anchor=0.0, px_scale=100.0):
     weight in px); linear (rot/scale) entries get anchor/px_scale, i.e.
     px_scale px of shift is treated like 100% of stretch.
     """
-    def cols(z):     # column indices of M_z's 6 unknowns [a00 a01 tx a10 a11 ty]
-        return None if z == 0 else slice(6 * (z - 1), 6 * z)
-
     ident = identity().reshape(-1)                  # M_0 entries
-    rows, rhs = [], []
-    for i, j, D in measurements:
-        A_D, t_D = np.asarray(D)[:, :2], np.asarray(D)[:, 2]
-        # 6 equations: entry (r, c) of M_j equals sum_k A_D[r,k] M_i[k,c] (+ t_D[r] for c=2)
-        for r in range(2):
-            for c in range(3):
-                row = np.zeros(6 * (n - 1))
-                b = t_D[r] if c == 2 else 0.0
-                if j == 0:
-                    b -= ident[3 * r + c]
-                else:
-                    row[6 * (j - 1) + 3 * r + c] = 1.0
-                for k in range(2):
-                    if i == 0:
-                        b += A_D[r, k] * ident[3 * k + c]
-                    else:
-                        row[6 * (i - 1) + 3 * k + c] -= A_D[r, k]
-                rows.append(row)
-                rhs.append(b)
+    rows, rhs = _data_rows(measurements, n)
     if anchor > 0:
         for z in range(1, n):
             for e in range(6):

@@ -16,45 +16,17 @@ slice-to-slice INCREMENTS of the chain:
   charges a single big jump far less than L2 would.
 
 Implemented as iteratively-reweighted least squares (IRLS): the same
-linear data rows as affine.solve_graph, plus per-increment difference rows
-whose weight is 1/sqrt(||increment|| + eps), re-solved a few times. Linear
-(rot/scale) entries are scaled by px_scale into px-equivalents (1% stretch or
-0.57 deg ~ px_scale/100 px) so one lambda governs all components. A small
-identity anchor keeps the still-unobservable global modes damped.
+linear data rows as affine.solve_graph (affine._data_rows, with the linear
+entries rescaled by px_scale into px-equivalents — 1% stretch or 0.57 deg
+~ px_scale/100 px — so one lambda governs all components), plus per-increment
+difference rows whose weight is 1/sqrt(||increment|| + eps), re-solved a few
+times. A small identity anchor keeps the still-unobservable global modes
+damped.
 """
 
 import numpy as np
 
 from registration import affine
-
-
-def _data_rows(measurements, n, px_scale):
-    """The pairwise-measurement rows of affine.solve_graph, with the linear-
-    entry equations (c != 2 — they involve only rot/scale unknowns) scaled by
-    px_scale into px-equivalents. Without this, data support for rotation is
-    ~px_scale x weaker than any px-denominated penalty, and the L1 prior
-    flattens every rotation regardless of lambda."""
-    ident = affine.identity().reshape(-1)
-    rows, rhs = [], []
-    for i, j, D in measurements:
-        A_D, t_D = np.asarray(D)[:, :2], np.asarray(D)[:, 2]
-        for r in range(2):
-            for c in range(3):
-                s = 1.0 if c == 2 else px_scale
-                row = np.zeros(6 * (n - 1))
-                b = t_D[r] if c == 2 else 0.0
-                if j == 0:
-                    b -= ident[3 * r + c]
-                else:
-                    row[6 * (j - 1) + 3 * r + c] = s
-                for k in range(2):
-                    if i == 0:
-                        b += A_D[r, k] * ident[3 * k + c]
-                    else:
-                        row[6 * (i - 1) + 3 * k + c] -= A_D[r, k] * s
-                rows.append(row)
-                rhs.append(b * s if c != 2 else b)
-    return rows, rhs
 
 
 def solve_graph_tv(measurements, n, tv=4.0, tv_lin=1.0, anchor=0.01, iters=12,
@@ -77,7 +49,7 @@ def solve_graph_tv(measurements, n, tv=4.0, tv_lin=1.0, anchor=0.01, iters=12,
     ident = affine.identity().reshape(-1)
     T_ENT, L_ENT = (2, 5), (0, 1, 3, 4)
 
-    data_rows, data_rhs = _data_rows(measurements, n, px_scale)
+    data_rows, data_rhs = affine._data_rows(measurements, n, px_scale)
     anchor_rows, anchor_rhs = [], []
     if anchor > 0:
         for z in range(1, n):

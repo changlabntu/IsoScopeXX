@@ -1,6 +1,6 @@
 """Mine REAL patches for genuine Z-discontinuities: latent screen -> pixel verify.
 
-    CUDA_VISIBLE_DEVICES=0 python regis2/find_discont.py --control
+    CUDA_VISIBLE_DEVICES=0 python registration/find_discont.py --control
 
 Screens all stored codecs (no re-encode: Engine.latents_from_indices) for
 sparse slice-to-slice "jump" spikes, ranks patches by a MAD-self-normalized
@@ -49,7 +49,7 @@ import torch  # noqa: E402
 from registration import affine, enhance, features  # noqa: E402
 from registration.evaluate import ncc  # noqa: E402
 from registration.register import phase_corr_shift  # noqa: E402
-from regis2.perturb_options import apply  # noqa: E402
+from registration.perturb import apply  # noqa: E402
 
 DEFAULT_CODEC = '/home/cheese/workspace/Output/skipU300/codec'
 DEFAULT_RAW = '/home/cheese/workspace/Data/thx10/roiAdsp4'

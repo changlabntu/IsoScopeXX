@@ -1,11 +1,11 @@
 """t-SNE microstructure map with 10% synthetically misaligned patches.
 
-    python regis2/tsne_corrupt.py
+    python registration/experiments/tsne_corrupt.py
 
 Repeats the skipU300 latent-t-SNE survey with the experiment's best settings
 (--feat latent --zpool mean: the structure-aware embedding; the bag-of-codes
 histogram is near-1D and background-dominated), except a random --frac of the
-512 patches is corrupted by the current regis2 corruption model (walk_drift:
+512 patches is corrupted by the round-2 corruption model (walk_drift:
 similarity random walk, rel rot ~U(+-0.5 deg) / shift ~U(+-3 px) / scale
 ~U(1+-0.005), composed with the smooth sinusoidal drift +-10 px / +-1 deg)
 BEFORE encoding. Corrupted patches are re-encoded from the raw roiAdsp4 tifs
@@ -25,7 +25,7 @@ import csv
 import os
 import sys
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
@@ -35,24 +35,16 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import tifffile  # noqa: E402
 import torch  # noqa: E402
-import torch.nn.functional as Fnn  # noqa: E402
 from glob import glob  # noqa: E402
 
 from registration import affine, enhance, features  # noqa: E402
-from registration.perturb import sample_transforms  # noqa: E402
-from regis2.perturb_options import apply, chunk_transforms, drift_transforms  # noqa: E402
+from registration.perturb import (sample_transforms, apply,  # noqa: E402
+                                  chunk_transforms, drift_transforms)
+from inference.latent_tsne import pool_latent  # noqa: E402
 
 DEFAULT_CODEC = '/home/cheese/workspace/Output/skipU300/codec'
 DEFAULT_RAW = '/home/cheese/workspace/Data/thx10/roiAdsp4'
 DEFAULT_OUT = '/home/cheese/workspace/Output/regis2/tsne_corrupt10'
-
-
-def pool_latent(vol, spatial, zpool='mean'):
-    """(1, C, H, W, Z) latent -> mean/max over Z, adaptive-pool to spatial^2,
-    flat. Mirrors inference/latent_tsne.py load_latent_features."""
-    zp = vol.float().amax(-1) if zpool == 'max' else vol.float().mean(-1)
-    p = Fnn.adaptive_avg_pool2d(zp[0], (spatial, spatial))
-    return p.flatten().cpu().numpy()
 
 
 def jump_feature(vol):

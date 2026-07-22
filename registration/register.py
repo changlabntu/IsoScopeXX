@@ -15,8 +15,10 @@ pixel, see features.py), then:
    under a valid-region-masked L1 loss.
 3. GRAPH SOLVE: pairwise measurements D_(z,z+o) ~ M_(z+o) o M_z^-1 (translation
    x8 back to pixel units) -> least-squares absolute transforms M_z with the
-   gauge fixed at M_0 = I (affine.solve_graph). Multiple offsets (default
-   1,2,4) suppress random-walk error accumulation of a pure neighbor chain.
+   gauge fixed at M_0 = I (affine.solve_graph; --solver tv swaps in
+   graph_tv.solve_graph_tv's fused-lasso increment prior). Multiple offsets
+   (default 1,2,4) suppress random-walk error accumulation of a pure
+   neighbor chain.
 4. APPLY: M_z^-1 warps each corrupted slice back (bicubic, full res) ->
    registered_{label}.npy + recovered_{label}.json.
 
@@ -108,8 +110,13 @@ def refine_pairs(feats, pairs, init_txy, iters=200, reg_t=0.0, reg_rs=0.0,
 
 
 def register_features(feats, stride, offsets, iters, reg_t=0.0, reg_rs=0.0,
-                      anchor=0.0):
-    """Feature planes -> absolute per-slice transforms (Z, 2, 3), pixel units."""
+                      anchor=0.0, solver='anchor', tv=4.0, tv_lin=2.0):
+    """Feature planes -> absolute per-slice transforms (Z, 2, 3), pixel units.
+
+    solver='anchor' = affine.solve_graph (identity prior, weight `anchor`);
+    solver='tv' = graph_tv.solve_graph_tv (group fused-lasso on increments,
+    penalties `tv` px / `tv_lin` px-equiv — one prior for drift, chunk tears
+    and walks alike)."""
     Z = feats.shape[0]
     pairs = [(z, z + o) for o in offsets for z in range(Z - o)]
     init = np.array([phase_corr_shift(feats[j], feats[i]) for i, j in pairs],
@@ -119,7 +126,12 @@ def register_features(feats, stride, offsets, iters, reg_t=0.0, reg_rs=0.0,
     refined = refine_pairs(feats, pairs, init, iters=iters, reg_t=reg_t, reg_rs=reg_rs)
     measurements = [(i, j, affine.params_to_mat(r, tx * stride, ty * stride, s))
                     for (i, j), (r, tx, ty, s) in zip(pairs, refined)]
-    return affine.solve_graph(measurements, Z, anchor=anchor), pairs, refined
+    if solver == 'tv':
+        from registration.graph_tv import solve_graph_tv
+        mats = solve_graph_tv(measurements, Z, tv=tv, tv_lin=tv_lin)
+    else:
+        mats = affine.solve_graph(measurements, Z, anchor=anchor)
+    return mats, pairs, refined
 
 
 def main():
@@ -143,6 +155,15 @@ def main():
                              'toward identity — damps the unobservable smooth drift '
                              'that structural change through Z leaks into long chains. '
                              '~1/(expected drift px); 0 = off (see affine.solve_graph)')
+    parser.add_argument('--solver', choices=('anchor', 'tv'), default='anchor',
+                        help="Graph solve: 'anchor' = affine.solve_graph "
+                             "(identity prior); 'tv' = graph_tv fused-lasso on "
+                             'increments — one prior for drift, chunk tears and '
+                             "walks alike (label suffix '_tv')")
+    parser.add_argument('--tv', type=float, default=4.0,
+                        help='tv solver: translation-increment penalty (px)')
+    parser.add_argument('--tv_lin', type=float, default=2.0,
+                        help='tv solver: rot/scale-increment penalty (px-equiv)')
     parser.add_argument('--cache_feats', action='store_true',
                         help='Save/reuse features_{label}.npy in --dir (for sweeps)')
     parser.add_argument('--model', default='skipU', help='Registry model (default skipU)')
@@ -168,6 +189,8 @@ def main():
         corrupted = ((corrupted + 1) * gains[:, None, None] - 1
                      + rng.normal(0, args.noise, corrupted.shape).astype(np.float32))
         label += '_noise'
+    if args.method != 'xcorr' and args.solver == 'tv':
+        label += '_tv'
     print(f'{args.dir}: ({Z}, {Y}, {X}), method={args.method}, label={label}')
 
     settings = dict(vars(args), label=label)
@@ -206,7 +229,8 @@ def main():
         offsets = [int(o) for o in args.pairs.split(',')]
         abs_mats, pairs, refined = register_features(feats_t, stride, offsets, args.iters,
                                                      reg_t=args.reg_t, reg_rs=args.reg_rs,
-                                                     anchor=args.anchor)
+                                                     anchor=args.anchor, solver=args.solver,
+                                                     tv=args.tv, tv_lin=args.tv_lin)
         pair_dump = [dict(i=i, j=j, rot_deg=float(r), tx=float(tx * stride),
                           ty=float(ty * stride), scale=float(s))
                      for (i, j), (r, tx, ty, s) in zip(pairs, refined)]

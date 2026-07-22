@@ -52,7 +52,7 @@ raw uncropped TIFF (z=561, `stitch_Z2244.tif`, raw col ~6577).
 to the raw slice region), `tif_to_zarr.py` downsamples by chunk-agnostic 2x2
 block mean, Blosc/zstd is lossless — none can create or darken a grid.
 
-## Connections to the regis2 results
+## Connections to the round-2 registration results
 
 - The seam migration is an independent fingerprint of the acquisition drift
   found by `measure_drift.py` (same order of magnitude; the tile grid is

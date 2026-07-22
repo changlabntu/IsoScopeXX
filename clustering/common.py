@@ -4,7 +4,7 @@ Three things live here and nowhere else:
 
 1. Codec geometry — chunk/stem/cell coordinate conventions matching the
    thx10codec layout (`z{a:04d}-{b:04d}/{rrr}{ccc}.npz`, 384-px patches) and
-   the regis2 (z, x, y) frame (`x = (col+0.5)*patch`, same as gaps.csv).
+   the registration (z, x, y) frame (`x = (col+0.5)*patch`, same as gaps.csv).
 2. The params-keyed cache scheme (fixes PLAN §8): every cache family is a dir
    `Output/clustering/cache/{family}-{md5(params)[:10]}/` holding a
    human-readable params.json plus per-chunk npz files. A loader that finds a

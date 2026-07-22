@@ -25,7 +25,7 @@ chunk (GEOMETRIC = recoverable rigid shift, CONTENT = NCC collapse with no
 shift, NOISE = neither).
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python regis2/find_discont.py \
+CUDA_VISIBLE_DEVICES=0 python registration/find_discont.py \
   --codec .../thx10codec/codec --chunks z0288-0336 --tex_min 0 \
   --out_dir <out>/find_discont_thx10/z0288-0336   # one call per chunk, ~5 min
 ```

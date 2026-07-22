@@ -1,17 +1,16 @@
-"""regis2 random-walk experiment on a 3D TIFF patch: corrupt -> register from
+"""Round-2 random-walk experiment on a 3D TIFF patch: corrupt -> register from
 the latent -> warp the latent -> decode (the registration/enhance.py "new
 way"), then write side-by-side 3D TIFFs for visualization.
 
-    python regis2/run_walkbig.py                    # walk_big on 007003005.tif
-    python regis2/run_walkbig.py --perturb walk     # registration/ defaults
+    python registration/experiments/run_walkbig.py                 # walk_big on 007003005.tif
+    python registration/experiments/run_walkbig.py --perturb walk  # perturb.py defaults
 
-Steps (everything imported from registration/, nothing there modified):
+Steps:
 1. Similarity-random-walk corruption, --perturb selects the strength:
    'walk'     = registration/perturb.py defaults (rel rot ~U(+-0.5 deg),
                 shift ~U(+-3 px), scale ~U(1+-0.005); seed 0)
-   'walk_big' = 2x steps (1 deg, 6 px, 0.01; seed 1) — the same chains as the
-                matching perturb_options.py panels. GT saved.
-   'walk_drift' = walk composed with perturb_options' smooth deterministic
+   'walk_big' = 2x steps (1 deg, 6 px, 0.01; seed 1). GT saved.
+   'walk_drift' = walk composed with perturb.py's smooth deterministic
                 drift (sinusoidal +-10 px translation / +-1 deg rotation, one
                 cycle): random tearing ON TOP of pure low-frequency motion.
 2. register.register_features on 'latent' feature planes (phase-corr +
@@ -35,7 +34,7 @@ import json
 import os
 import sys
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
@@ -46,10 +45,11 @@ import torch.nn.functional as F  # noqa: E402
 
 from registration import affine, enhance, features, register  # noqa: E402
 from registration.evaluate import transform_errors  # noqa: E402
-from registration.perturb import sample_transforms  # noqa: E402
-from regis2.graph_tv import solve_graph_tv  # noqa: E402
-from regis2.perturb_options import (DEFAULT_TIF, DEFAULT_OUT, apply,  # noqa: E402
-                                    chunk_transforms, drift_transforms, upz)
+from registration.perturb import (sample_transforms, apply,  # noqa: E402
+                                  chunk_transforms, drift_transforms, upz)
+
+DEFAULT_TIF = '/home/cheese/workspace/Data/thx10/selected/007003005.tif'
+DEFAULT_OUT = '/home/cheese/workspace/Output/regis2'
 
 
 def encode_h_planes(eng, stack, zbatch=8):
@@ -89,7 +89,7 @@ def quantize_planes(eng, h):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='regis2 walk_big latent->decode run')
+    parser = argparse.ArgumentParser(description='round-2 walk_big latent->decode run')
     parser.add_argument('--tif', default=DEFAULT_TIF, help='(Z, Y, X) [-1, 1] tiff')
     parser.add_argument('--out_base', default=DEFAULT_OUT)
     parser.add_argument('--perturb',
@@ -114,8 +114,8 @@ def main():
     parser.add_argument('--anchor', type=float, default=0.05)
     parser.add_argument('--solver', choices=('anchor', 'tv'), default='anchor',
                         help="Graph solve: 'anchor' = affine.solve_graph "
-                             "(identity prior); 'tv' = regis2.graph_tv fused-"
-                             'lasso on increments — one prior for drift, chunk '
+                             "(identity prior); 'tv' = graph_tv fused-lasso "
+                             'on increments — one prior for drift, chunk '
                              "tears and walks alike (tag suffix 'tv')")
     parser.add_argument('--tv', type=float, default=4.0,
                         help='tv solver: translation-increment penalty (px)')
@@ -196,11 +196,9 @@ def main():
     offsets = [int(o) for o in args.pairs.split(',')]
     abs_mats, pairs, refined = register.register_features(
         torch.from_numpy(feats).to(device), stride, offsets, args.iters,
-        reg_t=args.reg_t, reg_rs=args.reg_rs, anchor=args.anchor)
+        reg_t=args.reg_t, reg_rs=args.reg_rs, anchor=args.anchor,
+        solver=args.solver, tv=args.tv, tv_lin=args.tv_lin)
     if args.solver == 'tv':
-        meas = [(i, j, affine.params_to_mat(r, tx * stride, ty * stride, s))
-                for (i, j), (r, tx, ty, s) in zip(pairs, refined)]
-        abs_mats = solve_graph_tv(meas, Z, tv=args.tv, tv_lin=args.tv_lin)
         print(f'tv solve (tv {args.tv}, tv_lin {args.tv_lin})')
     with open(os.path.join(out_dir, f'recovered_{tag}.json'), 'w') as f:
         json.dump(dict(abs_params=[affine.mat_to_params(m) for m in abs_mats],
