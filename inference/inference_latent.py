@@ -60,6 +60,14 @@ def main():
     parser.add_argument('--range', type=int, nargs=2, default=None, metavar=('START', 'END'),
                         help='Slice of the sorted file list, files[START:END] (default: all)')
     parser.add_argument('--epoch', type=int, default=None, help="Override the registry's epoch")
+    parser.add_argument('--gamma', type=float, default=None,
+                        help="Override the 11g gamma for BOTH the input transform and the "
+                             "output inversion (default: the run's trained value). Lower = "
+                             'more compressive input + matching inverse; the model was '
+                             'trained at its config gamma, so off-value input is slightly '
+                             'out-of-distribution.')
+    parser.add_argument('--gamma_lo', type=float, default=None,
+                        help="Override the 11g noise floor (default: the run's trained value)")
     parser.add_argument('--device', default=None, help='cuda / cpu (default: cuda if available)')
     parser.add_argument('--eval', dest='train_mode', action='store_false',
                         help='Deterministic running-stat inference (default: generator '
@@ -80,6 +88,17 @@ def main():
 
     eng = Engine.from_registry(args.model, epoch=args.epoch, device=args.device,
                                train_mode=args.train_mode)
+    if args.gamma is not None or args.gamma_lo is not None:
+        if eng.spec['nm'] != '11g':
+            raise ValueError(f"--gamma/--gamma_lo apply only to nm='11g' (this run is "
+                             f"nm='{eng.spec['nm']}')")
+        old = dict(eng.spec)
+        if args.gamma is not None:
+            eng.spec['gamma'] = args.gamma
+        if args.gamma_lo is not None:
+            eng.spec['gamma_lo'] = args.gamma_lo
+        print(f"gamma override: {old['gamma']}/{old['gamma_lo']} -> "
+              f"{eng.spec['gamma']}/{eng.spec['gamma_lo']} (input transform + inversion)")
     if args.half:
         eng.gan.half()
     root = os.path.join(args.out_base, args.exp)

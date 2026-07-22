@@ -33,6 +33,24 @@ MODELS = {
         epoch=300,                  # 0-1100 available at epoch_save=100
         nm='11g', gamma=0.7, gamma_lo=-0.8,
     ),
+    # filopodia: MSclean run on the Chulab SA635 filopodia patches
+    # (dataset filopodia/, direction SA635/; cropz 48 / cropsize 192 -> uprate 4,
+    # Z 64 -> 256). nm/gamma/gamma_lo omitted so the Engine uses the run's own
+    # config.json (11g, gamma 0.8, gamma_lo -0.85) — the single source of truth.
+    'filopodia': dict(
+        checkpoint='/home/cheese/workspace/logs/filopodia/MSclean/b4/checkpoints/20260720_150240',
+        model_file='models/MSclean.py',
+        epoch=100,
+    ),
+    # filopodia_g03: retrain of the above with a lower training gamma to
+    # preserve dim filopodia detail (config gamma 0.3, gamma_lo -0.9 vs the
+    # 0.8/-0.85 of 'filopodia'). nm/gamma/gamma_lo omitted -> Engine uses the
+    # run's config.json.
+    'filopodia_g03': dict(
+        checkpoint='/home/cheese/workspace/logs/filopodia/MSclean/b4/checkpoints/20260722_143233',
+        model_file='models/MSclean.py',
+        epoch=300,
+    ),
     # Template for further entries (e.g. a vqclean run, once its weights exist
     # on this box):
     # 'vqclean': dict(
