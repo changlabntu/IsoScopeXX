@@ -9,13 +9,23 @@ compression codec — i.e. to show *what kind* of material microstructure
 occupies each region, not merely *how much* structure is there.
 
 **Folder scope.** Everything about clustering / texture-mapping / material
-microstructure identity from the stored VQ codecs lives here; `regis2/` stays about
-registration, drift, and gap detection. Moved in from regis2:
-`latent_cluster.md` (findings log) and `latent_overlay.py` (the box/contour
-PC overlay, output convention `Output/regis2/cluster_fable/XXX.npy + XXX/`).
+microstructure identity from the stored VQ codecs lives here; registration,
+drift, and gap detection live in `registration/` (formerly `regis2/`, merged
+2026-07-22). Moved in from regis2: `latent_cluster.md` (findings log) and
+`latent_overlay.py` (the box/contour PC overlay, output convention
+`Output/regis2/cluster_fable/XXX.npy + XXX/`; retired 2026-07-22 together
+with the concluded F4/F5 harness baselines — all three recoverable from git
+history, their outputs archived under `Output/regis2/cluster_fable/` and
+`Output/clustering/harness/`).
 New experiments from this plan write to **`Output/clustering/`** with the
 same `XXX.npy + XXX/` convention (cluster_fable stays as the archive of the
 PC-overlay era).
+
+**Anchors provenance.** `anchors.csv` (the frozen probe-label set `harness
+eval` uses) was authored against the v0b classes of the superseded zwin=3
+lineage; the current lineage is v1 → v1a → v1a1 (zwin=1). The labels remain
+valid as ground truth for the probe, but their class names predate the v1
+round.
 
 ## 1. Where we are
 

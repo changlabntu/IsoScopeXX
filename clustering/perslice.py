@@ -252,10 +252,11 @@ def main():
     ap.add_argument('--chunks', default=None,
                     help='subset for smoke tests (default: all)')
     ap.add_argument('--z', default=None,
-                    help='on-demand overlays for these z slices only (same '
-                         'syntax as --render): computes features just for '
-                         'them, using cached refs — seconds per slice, no '
-                         'volume write')
+                    help="on-demand overlays for these z slices only (comma "
+                         "list of slices or a-b ranges, e.g. '115' or "
+                         "'100-130,200'): computes features just for them, "
+                         'using cached refs — seconds per slice, no volume '
+                         'write')
     ap.add_argument('--alpha', type=float, default=0.55)
     args = ap.parse_args()
     reg = load_versions()
@@ -358,7 +359,8 @@ def main():
         return
 
     # (whole-volume classification retired 2026-07-22 — the --z path above is
-    # the only computation mode; --render serves pre-retirement volumes)
+    # the only computation mode; pre-retirement volumes stay viewable under
+    # their Output/clustering/perslice_* dirs)
 
 
 if __name__ == '__main__':

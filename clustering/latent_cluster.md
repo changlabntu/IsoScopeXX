@@ -63,7 +63,7 @@ edge-vs-core texture difference is partly acquisition, not only material.
 - Colour hard clusters by feature-space similarity order, never raw KMeans
   label index, if clusters are used at all.
 
-## Fixed overlays: `regis2/latent_overlay.py` (2026-07-21, follow-up)
+## Fixed overlays: `latent_overlay.py` (2026-07-21, follow-up; script retired 2026-07-22 — in git history)
 
 The `coarse_spectrum_*` overlays above were diagnosed with three display-side
 faults and rebuilt. Outputs now live under `Output/regis2/cluster_fable/` as
@@ -132,5 +132,6 @@ per-scale features give substantially different top-N (13–21 of 41 overlap);
 max pooling implicitly favours fine structure. Validate flags with the middle-
 slice overlay (`anomalies_overlay_*`, emitted automatically with the thumbnail
 figure), not with dot position on the t-SNE map. Script now also has
-`--scale k` (single residual scale), `--zpool` (in `regis2/tsne_corrupt.py`),
+`--scale k` (single residual scale), `--zpool` (in
+`registration/experiments/tsne_corrupt.py`),
 and `--zwin w` (central-window Z pooling, added for the fixed overlays above).
