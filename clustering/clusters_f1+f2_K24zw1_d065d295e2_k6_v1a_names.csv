@@ -1,0 +1,15 @@
+# fill `name` per cluster; same name merges clusters; blank or junk drops it
+# v1a (parent v1 keep 0,2,5; k=6, zwin=1 features). PROVISIONAL names:
+#   c0 faint texture at dark edges (smallest)
+#   c1 wispy curvy strands in haze
+#   c2 diffuse laminar/striated haze, membrane arcs (largest)
+#   c3 distinct beaded strand network (clearest fiber)
+#   c4 sparse puncta + short strands
+#   c5 dim rounded bodies / blobs
+cluster,count,name
+0,10645,fiber-faint-edge
+1,37412,fiber-wispy
+2,67160,fiber-diffuse-laminar
+3,48305,fiber-beaded-network
+4,34173,fiber-punctate-sparse
+5,29078,fiber-dim-bodies

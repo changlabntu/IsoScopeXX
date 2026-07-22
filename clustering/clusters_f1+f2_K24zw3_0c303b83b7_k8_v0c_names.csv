@@ -1,0 +1,14 @@
+# fill `name` per cluster; same name merges clusters; blank or junk drops it
+# v0c (parent v0, k=8 within fiber). PROVISIONAL names — rename freely.
+# Redundancy candidates (merge by giving the same name): c1~c7 (faint puncta
+# strands), c2~c5 (beaded webs), c0~c6 (granular matrix + rounded bodies).
+# Genuinely new vs v0b: c3 striated parallel wisps, c4 thick bright bundles.
+cluster,count,name
+0,16521,matrix-bodies
+1,18540,faint-strands
+2,20691,beaded-strands
+3,24548,striated-wisps
+4,7235,thick-bundles
+5,15269,beaded-web
+6,8186,clumped-bodies
+7,23061,punctate-web

@@ -1,0 +1,13 @@
+# fill `name` per cluster; same name merges clusters; blank or junk drops it
+# v1 root (zwin=1 = 3-slice window, k=8, all gated cells).
+# PROVISIONAL names — rename freely. Fiber candidates for --keep: c0, c5
+# (the zwin=1 analog of v0's c0+c7 fiber pair).
+cluster,count,name
+0,67918,fiber-network
+1,50075,dense-speckle
+2,87671,fiber-diffuse
+3,65106,noise-edges
+4,50270,matrix-bodies
+5,71184,fiber-strands
+6,15837,bright-clumps
+7,21851,coarse-speckle

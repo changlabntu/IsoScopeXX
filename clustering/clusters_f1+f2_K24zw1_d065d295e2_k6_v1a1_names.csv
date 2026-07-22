@@ -1,0 +1,16 @@
+# fill `name` per cluster; same name merges clusters; blank or junk drops it
+# v1a1 (parent v1a keep 1,3 = wispy+beaded-network; k=6, zwin=1 features).
+# PROVISIONAL names — rename freely:
+#   c0 dim strand fragments in speckle
+#   c1 smooth laminar sheets (smallest; possibly out-of-plane fiber faces)
+#   c2 branched beaded network with junctions
+#   c3 isolated single beaded strands
+#   c4 granular residual + rounded bodies (candidate junk)
+#   c5 thick bright tubes, strong beading
+cluster,count,name
+0,20397,strand-fragments
+1,6019,laminar-sheets
+2,16599,branched-network
+3,19456,single-strands
+4,13319,granular-residual
+5,9927,thick-tubes

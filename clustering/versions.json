@@ -22,9 +22,9 @@
   },
   "v0a": {
     "classes": {
-      "0": "c0",
-      "1": "c1",
-      "2": "c2"
+      "0": "fiber-sparse",
+      "1": "fiber-in-matrix",
+      "2": "fiber-distinct"
     },
     "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw3_0c303b83b7_k3_v0a.npz",
     "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw3_0c303b83b7.npz",
@@ -34,15 +34,89 @@
   },
   "v0b": {
     "classes": {
-      "0": "c0",
-      "1": "c1",
-      "2": "c2",
-      "3": "c3"
+      "0": "fiber-in-matrix",
+      "1": "fiber-beaded-thin",
+      "2": "fiber-thick-web",
+      "3": "fiber-faint-sparse"
     },
     "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw3_0c303b83b7_k4_v0b.npz",
     "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw3_0c303b83b7.npz",
     "k": 4,
     "keep": null,
     "parent": "v0"
+  },
+  "v0c": {
+    "classes": {
+      "0": "matrix-bodies",
+      "1": "faint-strands",
+      "2": "beaded-strands",
+      "3": "striated-wisps",
+      "4": "thick-bundles",
+      "5": "beaded-web",
+      "6": "clumped-bodies",
+      "7": "punctate-web"
+    },
+    "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw3_0c303b83b7_k8_v0c.npz",
+    "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw3_0c303b83b7.npz",
+    "k": 8,
+    "keep": null,
+    "parent": "v0"
+  },
+  "v1": {
+    "classes": {
+      "0": "fiber-network",
+      "1": "dense-speckle",
+      "2": "fiber-diffuse",
+      "3": "noise-edges",
+      "4": "matrix-bodies",
+      "5": "fiber-strands",
+      "6": "bright-clumps",
+      "7": "coarse-speckle"
+    },
+    "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw1_d065d295e2_k8_v1.npz",
+    "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw1_d065d295e2.npz",
+    "k": 8,
+    "keep": [
+      0,
+      2,
+      5
+    ],
+    "note": "user call: c0+c2+c5 are material fiber (zwin=1 root)",
+    "parent": null
+  },
+  "v1a": {
+    "classes": {
+      "0": "fiber-faint-edge",
+      "1": "fiber-wispy",
+      "2": "fiber-diffuse-laminar",
+      "3": "fiber-beaded-network",
+      "4": "fiber-punctate-sparse",
+      "5": "fiber-dim-bodies"
+    },
+    "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw1_d065d295e2_k6_v1a.npz",
+    "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw1_d065d295e2.npz",
+    "k": 6,
+    "keep": [
+      1,
+      3
+    ],
+    "note": "user call: keep c1 fiber-wispy (blue) + c3 fiber-beaded-network (yellow)",
+    "parent": "v1"
+  },
+  "v1a1": {
+    "classes": {
+      "0": "strand-fragments",
+      "1": "laminar-sheets",
+      "2": "branched-network",
+      "3": "single-strands",
+      "4": "granular-residual",
+      "5": "thick-tubes"
+    },
+    "clusters": "/home/cheese/workspace/Output/clustering/clusters_f1+f2_K24zw1_d065d295e2_k6_v1a1.npz",
+    "feat": "/home/cheese/workspace/Output/clustering/f1+f2_K24zw1_d065d295e2.npz",
+    "k": 6,
+    "keep": null,
+    "note": "k=6 within v1a wispy+beaded-network",
+    "parent": "v1a"
   }
 }

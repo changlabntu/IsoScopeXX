@@ -56,8 +56,46 @@ def list_stems(codec, chunk):
                   for f in glob(os.path.join(codec, chunk, '*.npz')))
 
 
+_FAST_CACHE = {}
+
+
+def _fast_store(codec, chunk):
+    """Memory-mapped per-chunk uint8 arrays written by codec_fast.py, or None.
+    Ignored unless {codec_parent}/fast/params.json points at this codec."""
+    key = (codec, chunk)
+    if key in _FAST_CACHE:
+        return _FAST_CACHE[key]
+    res = None
+    root = os.path.join(os.path.dirname(os.path.abspath(codec)), 'fast')
+    d = os.path.join(root, chunk)
+    pj = os.path.join(root, 'params.json')
+    if os.path.exists(os.path.join(d, 'stems.npy')) and os.path.exists(pj):
+        with open(pj) as f:
+            src_ok = json.load(f).get('source') == os.path.abspath(codec)
+        if src_ok:
+            stems = np.load(os.path.join(d, 'stems.npy')).astype(str)
+            idx = {s: i for i, s in enumerate(stems)}
+            arrs = []
+            for k in range(16):
+                p = os.path.join(d, f'scale_{k}.npy')
+                if not os.path.exists(p):
+                    break
+                arrs.append(np.load(p, mmap_mode='r'))
+            if arrs:
+                res = (idx, arrs)
+    _FAST_CACHE[key] = res
+    return res
+
+
 def load_codes(codec, chunk, stem):
-    """[(Z, hk, wk) int32 per scale, coarse->fine] for one patch."""
+    """[(Z, hk, wk) int32 per scale, coarse->fine] for one patch. Reads the
+    codec_fast.py store when present (no decompression), else the npz."""
+    fast = _fast_store(codec, chunk)
+    if fast is not None:
+        idx, arrs = fast
+        i = idx.get(stem)
+        if i is not None:
+            return [np.asarray(a[i], dtype=np.int32) for a in arrs]
     z = np.load(os.path.join(codec, chunk, stem + '.npz'))
     keys = sorted((k for k in z.files if k.startswith('scale_')),
                   key=lambda k: int(k.split('_')[1]))
