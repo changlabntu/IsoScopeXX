@@ -98,22 +98,44 @@ class GAN(BaseModel):
         # Quantizers — separate codebook per scale by default
         # Set --shared_codebook to use a single codebook across all scales (VAR paper)
         self.shared_codebook = getattr(hparams, 'shared_codebook', False)
+
+        # Per-scale codebook sizes (coarse->fine). Default: the yaml n_embed for
+        # every scale, so an unset flag reproduces the old uniform allocation.
+        scales_arg = getattr(hparams, 'n_embed_scales', None)
+        if scales_arg:
+            sizes = [int(s) for s in str(scales_arg).split(',')]
+            if len(sizes) != self.num_scales:
+                raise ValueError('--n_embed_scales needs %d comma-separated sizes, got %d'
+                                 % (self.num_scales, len(sizes)))
+            if self.shared_codebook:
+                raise ValueError('--n_embed_scales requires separate codebooks '
+                                 '(drop --shared_codebook)')
+        else:
+            sizes = [self.n_embed] * self.num_scales
+
+        # Collapse mitigations are opt-in: without --vq_normalize/--vq_restart the
+        # plain taming VectorQuantizer is instantiated, byte-identical to before.
+        vq_normalize = getattr(hparams, 'vq_normalize', False)
+        vq_restart = getattr(hparams, 'vq_restart', False)
+
+        def _make_quantizer(n_e):
+            common = dict(remap=getattr(hparams, 'remap', None),
+                          sane_index_shape=getattr(hparams, 'sane_index_shape', False))
+            if vq_normalize or vq_restart:
+                from models.quantize import VectorQuantizerVQR
+                return VectorQuantizerVQR(
+                    n_e, self.embed_dim, beta=0.25,
+                    normalize=vq_normalize, restart=vq_restart,
+                    restart_every=getattr(hparams, 'vq_restart_every', 200),
+                    restart_thresh=getattr(hparams, 'vq_restart_thresh', 1.0),
+                    **common)
+            return VectorQuantizer(n_e, self.embed_dim, beta=0.25, **common)
+
         if self.shared_codebook:
-            shared_q = VectorQuantizer(
-                self.n_embed, self.embed_dim, beta=0.25,
-                remap=getattr(hparams, 'remap', None),
-                sane_index_shape=getattr(hparams, 'sane_index_shape', False)
-            )
+            shared_q = _make_quantizer(self.n_embed)
             self.quantizers = nn.ModuleList([shared_q for _ in range(self.num_scales)])
         else:
-            self.quantizers = nn.ModuleList([
-                VectorQuantizer(
-                    self.n_embed, self.embed_dim, beta=0.25,
-                    remap=getattr(hparams, 'remap', None),
-                    sane_index_shape=getattr(hparams, 'sane_index_shape', False)
-                )
-                for _ in range(self.num_scales)
-            ])
+            self.quantizers = nn.ModuleList([_make_quantizer(s) for s in sizes])
 
         # Adapters projecting the injected VQ scales (z_channels, latent res) to the
         # net_g decode-stage channel counts (nf follows set_networks' nf=hparams.ngf).
@@ -217,6 +239,21 @@ class GAN(BaseModel):
                                  'coarse trunk + two injected scales)')
         parser.add_argument("--shared_codebook", action='store_true',
                             help='share a single codebook across all scales (VAR paper setting)')
+        # Codebook-collapse mitigations (all opt-in; unset = identical to before).
+        parser.add_argument("--n_embed_scales", type=str, default=None,
+                            help='comma-separated per-scale codebook sizes coarse->fine, '
+                                 'e.g. "64,64,256,512"; default: the ldm yaml n_embed for '
+                                 'every scale. Requires separate codebooks.')
+        parser.add_argument("--vq_normalize", action='store_true',
+                            help='cosine VQ: L2-normalize codes and encoder outputs (improves '
+                                 'codebook utilization; best with a low embed_dim)')
+        parser.add_argument("--vq_restart", action='store_true',
+                            help='dead-code restart: periodically reinit unused codes to '
+                                 'current encoder outputs')
+        parser.add_argument("--vq_restart_every", type=int, default=200,
+                            help='steps between dead-code restarts (with --vq_restart)')
+        parser.add_argument("--vq_restart_thresh", type=float, default=1.0,
+                            help='EMA-usage below which a code is dead (with --vq_restart)')
         return parent_parser
 
     # ------------------------------------------------------------------
