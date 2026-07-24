@@ -44,6 +44,15 @@ The full copy-pasteable workflow lives in **`pipeline.sh`**.
   `decode_stack --tiff` without `--orig`) and the pure `Engine` API.
 - `latent_tsne.py` is pure CPU/sklearn — no model, no GPU.
 
+## Companion docs
+
+- **`pipeline.sh`** — copy-pasteable encode → compare workflow.
+- **`DECODE_ROUNDTRIP.md`** — the encode/decode round-trip contract & invariants.
+- **`edge_recipe.md`** — the decoder-uncertainty + 3D edge pipeline end to end:
+  the `--tta`/`--mc` `std`+`mean` maps (Stage A: TTA mechanics, flag/mode
+  semantics), then edge extraction (instant-alpha flood fill + dim-dot rescue)
+  with the self-contained code.
+
 ---
 
 ## Library API
@@ -98,7 +107,9 @@ Pins checkpoint, `model_file`, epoch and normalization per model name.
 - `available()` — registered names.
 - `get(name)` — the spec dict (a copy).
 - `register(name, **spec)` — add/replace at runtime.
-- `MODELS` — the dict itself. Current entry: **`skipU`**.
+- `MODELS` — the dict itself. Current entries: **`skipU`** (thx10 MSclean),
+  **`filopodia`** and **`filopodia_g03`** (Chulab SA635 runs, per-run
+  `config.json` normalization).
 
 ### `zarr_io.py` — zarr helpers (lazy `tensorstore` import)
 - `open_zarr(store, level)` — open one pyramid level read-only.
@@ -162,6 +173,15 @@ back, writing `decode/{stem}.tif` (isotropic, ZX pages) + `input/{stem}.tif`
 (trilinear input at the same size) for side-by-side inspection. The simple
 per-volume path; `decode_stack.py` is the grid/large-stack counterpart.
 - `to_zx_pages(vol_yxz)` — `(Y,X,Z)` → ZX tif pages `(Y,Z,X)`.
+
+Extra flags:
+- **`--tta [THRESHOLD]` / `--mc N`** — decoder-uncertainty maps: decode the
+  latent-TTA variants (× N MC draws) and also write `std/{stem}.tif`
+  (per-voxel disagreement) and `mean/{stem}.tif` (consensus). Feeds the edge
+  pipeline — see `edge_recipe.md` (TTA mechanics + edge extraction).
+- **`--gamma / --gamma_lo`** — override the `11g` gamma for both the input
+  transform and the output inversion (only valid for `nm='11g'` runs).
+- **`--eval`** — deterministic running-stat decode instead of the MC default.
 
 ### `latent_tsne.py` — codec map + anomaly flagging
 Pure CPU/sklearn. Turns each patch's codec into a per-scale code-usage

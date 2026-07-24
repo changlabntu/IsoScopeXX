@@ -14,6 +14,15 @@ For every selected {stem}.tif (page order Z, Y, X) this writes under
                         rows Z, cols X — the synthesized axis in-plane)
     input/{stem}.tif    the trilinear-interpolated input at the same size,
                         same scale and ZX order, for side-by-side inspection
+    mean/{stem}.tif     (--tta only) per-voxel mean of the raw denormalized
+                        TTA/MC variants — the stable consensus volume (dim
+                        structure that flickers in single draws survives here)
+    std/{stem}.tif      (--tta only) per-voxel std across the latent-TTA
+                        decode variants — of the raw outputs (bare --tta) or of
+                        the binary masks M > THRESHOLD (--tta THRESHOLD, on the
+                        denormalized scale); --mc N repeats the TTA set N times
+                        with fresh MC-dropout draws (4*N variants pooled); same
+                        ZX order as decode/
 
 The model comes from inference/registry.py (checkpoint, model_file, epoch,
 normalization); --epoch/--device override the spec. Generator components run
@@ -43,10 +52,25 @@ from inference import Engine, available, get as registry_get  # noqa: E402
 
 DEFAULT_OUT_BASE = '/home/cheese/workspace/Output'
 
+# --tta given bare (no threshold) -> std of the raw outputs. A non-string
+# sentinel: argparse would pass a string const through type=float and crash.
+TTA_RAW = object()
+
 
 def to_zx_pages(vol_yxz):
     """(Y, X, Z) float32 array -> ZX tif pages (Y, Z, X): page y=k, rows Z, cols X."""
     return np.ascontiguousarray(np.transpose(vol_yxz, (0, 2, 1)))
+
+
+# Latent TTA: self-inverse ops on the in-plane dims of the volume-form latent
+# (B, C, Y, X, Z) — the same dims (2=Y, 3=X) index the decoder output, so each
+# op is its own inverse on both sides. net_g is Y/X-isotropic (equal kernels/
+# strides/upsample in ed023eMSfpn), so the transpose is a valid symmetry.
+TTA_OPS = [
+    ('transpose', lambda t: t.transpose(2, 3).contiguous()),
+    ('flipx', lambda t: torch.flip(t, dims=[3])),
+    ('flipy', lambda t: torch.flip(t, dims=[2])),
+]
 
 
 def main():
@@ -72,12 +96,35 @@ def main():
     parser.add_argument('--eval', dest='train_mode', action='store_false',
                         help='Deterministic running-stat inference (default: generator '
                              'components in .train() — batch-stat BN + MC dropout)')
+    parser.add_argument('--tta', nargs='?', type=float, default=None, const=TTA_RAW,
+                        metavar='THRESHOLD',
+                        help='Latent TTA: decode {identity, transpose XY, flip X, flip Y} '
+                             'variants of the latent, inverse-transform the outputs, and '
+                             'write their per-voxel std to std/{stem}.tif (decode/ stays '
+                             'the identity decode). With a THRESHOLD (on the denormalized '
+                             '[-1, 1] scale) each variant is first binarized as M > '
+                             'THRESHOLD and the std is over the binary masks; bare --tta '
+                             'gives the std of the raw outputs. In the default MC mode the '
+                             'std mixes TTA and dropout variation; add --eval for pure TTA '
+                             'sensitivity.')
+    parser.add_argument('--mc', type=int, default=1, metavar='N',
+                        help='With --tta: repeat the whole TTA set N times, each pass a '
+                             'fresh MC-dropout draw (generator components in .train()), so '
+                             'the std pools 4*N variants. Needs the default train mode '
+                             '(incompatible with --eval, where repeats are identical).')
     parser.add_argument('--half', action='store_true',
                         help='Run the model and inputs in fp16 (halves GPU memory; codebook '
                              'argmin in fp16 can shift a few indices vs an fp32 run)')
     parser.add_argument('--out_base', default=DEFAULT_OUT_BASE,
                         help=f'Output base dir (default: {DEFAULT_OUT_BASE})')
     args = parser.parse_args()
+    if args.mc < 1:
+        parser.error('--mc must be >= 1')
+    if args.mc > 1 and args.tta is None:
+        parser.error('--mc only applies to the TTA std; pass --tta [THRESHOLD] too')
+    if args.mc > 1 and not args.train_mode:
+        parser.error('--mc N>1 needs MC dropout (generator in .train()); drop --eval — '
+                     'eval-mode decodes are deterministic, so repeats would be identical')
 
     files = sorted(glob(os.path.join(args.source, '*.tif'))
                    + glob(os.path.join(args.source, '*.tiff')))
@@ -102,7 +149,9 @@ def main():
     if args.half:
         eng.gan.half()
     root = os.path.join(args.out_base, args.exp)
-    dirs = {d: os.path.join(root, d) for d in ('codec', 'decode', 'input')}
+    dirs = {d: os.path.join(root, d)
+            for d in ('codec', 'decode', 'input')
+            + (('std', 'mean') if args.tta is not None else ())}
     for d in dirs.values():
         os.makedirs(d, exist_ok=True)
 
@@ -131,13 +180,36 @@ def main():
                             **codec)
 
         # decode from the stored form, so codec/ alone reproduces decode/
-        out = eng.decode(eng.latents_from_indices(indices))         # (1, 1, Y, X, Z')
-        dec = eng.denormalize(out[0, 0].float().cpu().numpy())
+        lat = eng.latents_from_indices(indices)
+        out = eng.decode(lat)                                       # (1, 1, Y, X, Z')
+        dec = eng.denormalize(out[0, 0].float()).cpu().numpy()  # denorm on GPU
         tiff.imwrite(os.path.join(dirs['decode'], stem + '.tif'),
                      to_zx_pages(dec).astype(np.float32))
 
+        if args.tta is not None:
+            ops = [('identity', lambda t: t)] + TTA_OPS
+            if lat[0].shape[2] != lat[0].shape[3]:
+                print(f'  {stem}: latent Y{lat[0].shape[2]} != X{lat[0].shape[3]}, '
+                      'skipping transpose variant')
+                ops = [(n, op) for n, op in ops if n != 'transpose']
+            variants = [dec]                       # draw 0, identity: already decoded
+            for draw in range(args.mc):            # each pass a fresh MC-dropout draw
+                for name, op in ops:
+                    if draw == 0 and name == 'identity':
+                        continue
+                    out_v = op(eng.decode([op(l) for l in lat]))  # op is self-inverse
+                    variants.append(eng.denormalize(out_v[0, 0].float()).cpu().numpy())
+            stack = np.stack(variants)
+            tiff.imwrite(os.path.join(dirs['mean'], stem + '.tif'),
+                         to_zx_pages(stack.mean(axis=0)).astype(np.float32))
+            if args.tta is not TTA_RAW:           # binary-mask mode: std of M > threshold
+                stack = (stack > args.tta).astype(np.float32)
+            std = np.std(stack, axis=0)
+            tiff.imwrite(os.path.join(dirs['std'], stem + '.tif'),
+                         to_zx_pages(std).astype(np.float32))
+
         xup = F.interpolate(x, size=out.shape[2:], mode='trilinear')
-        inp = eng.denormalize(xup[0, 0].float().cpu().numpy())
+        inp = eng.denormalize(xup[0, 0].float()).cpu().numpy()
         tiff.imwrite(os.path.join(dirs['input'], stem + '.tif'),
                      to_zx_pages(inp).astype(np.float32))
 
