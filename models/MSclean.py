@@ -303,6 +303,7 @@ class GAN(BaseModel):
         scale_latents = []
         emb_losses = []
         indices = []
+        perplexities = []     # per-scale codebook perplexity (None for plain VQ)
 
         for k, scale in enumerate(self.scale_factors):
             r_k = residual
@@ -313,6 +314,7 @@ class GAN(BaseModel):
             code_k, emb_loss_k, info_k = self.quantizers[k](self.quant_convs[k](r_k))
             emb_losses.append(emb_loss_k)
             indices.append(info_k[2])
+            perplexities.append(info_k[0])   # info[0] is None unless VectorQuantizerVQR
 
             if scale > 1:
                 code_k = F.interpolate(code_k, size=(H, W),
@@ -323,6 +325,7 @@ class GAN(BaseModel):
             residual = residual - latent_k
 
         # Normalize emb_loss to keep qloss magnitude stable regardless of num_scales
+        self.vq_perplexity = perplexities   # stashed for backward_g logging
         return scale_latents, sum(emb_losses) / self.num_scales, indices
 
     def decode(self, latent):
@@ -617,6 +620,12 @@ class GAN(BaseModel):
         loss_dict['ae'] = aeloss
         loss_dict['vq'] = self.qloss
         loss_g += self.qloss
+
+        # per-scale codebook perplexity (effective # codes in use) — logged only
+        # when the quantizer reports it (VectorQuantizerVQR); metric only, not a loss
+        for k, ppl in enumerate(getattr(self, 'vq_perplexity', []) or []):
+            if ppl is not None:
+                loss_dict['ppl%d' % k] = ppl.detach()
 
         loss_dict['sum'] = loss_g
         return loss_dict
