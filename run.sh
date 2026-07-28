@@ -99,10 +99,20 @@
 # skipUB foreground-gamma — anti-alias stack (resize-conv netG + BlurPool netD), only deltas vs the line above
 #CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/roiD192gf/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.5 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri thx-MS-384gf
 
-# MSclean baseline. b=4
-CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b6 --env b200 --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 6
+# MSclean baseline. b=6
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b6 --env b200 --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 6
+
+# iUExM
+#CUDA_VISIBLE_DEVICES=0 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b6 --env b200 --dataset iUExM/ --direction roiA/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 4
+
+# filopodia
+CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b4Lb10 --env b200 --dataset filopodia/ --direction SA635/ --nm 11g --gamma 0.3 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 2 --downbranch 2 --vq_normalize --vq_restart --tracking_uri https://mlflow.ntugarylab.dpdns.org/
+
+
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj vqclean/b4Lb10 --env b200 --dataset filopodia/ --direction SA635/ --nm 11g --gamma 0.3 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --models vqclean --lr 0.0005 --netG ed023e --netD patch_16 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 2 --downbranch 2
 
 # remote tracking: --tracking_uri https://mlflow.ntugarylab.dpdns.org/
+
 
 
 
