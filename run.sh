@@ -99,11 +99,56 @@
 # skipUB foreground-gamma — anti-alias stack (resize-conv netG + BlurPool netD), only deltas vs the line above
 #CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipUB/roiD192gf/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.5 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanM0aMSskipE --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patchblur_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri thx-MS-384gf
 
-# MSclean baseline. b=4
-CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b6 --env b200 --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 6
+# MSclean baseline. b=6
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b6 --env b200 --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 6
+
+# iUExM
+#CUDA_VISIBLE_DEVICES=0 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b6 --env b200 --dataset iUExM/ --direction roiA/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 4
+
+# filopodia
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b4Lb10 --env b200 --dataset filopodia/ --direction SA635/ --nm 11g --gamma 0.3 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 2 --downbranch 2 --vq_normalize --vq_restart --tracking_uri https://mlflow.ntugarylab.dpdns.org/
+
+# TP0727
+#CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b4Lb10 --env brcb --dataset TP0727/ --direction TP0727/ --nm 11g --gamma 0.4 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 -b 1 --downbranch 2 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 301
+
+#CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b4Lb10 --env brcb --dataset TP0727/ --direction TP0727/ --nm 11g --gamma 0.7 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 -b 1 --downbranch 2 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 301
+
+#CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b4Lb10 --env brcb --dataset TP0727/ --direction TP0727/ --nm 11g --gamma 1.0 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 -b 1 --downbranch 2 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 301
+
+
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj vqclean/b4Lb10 --env b200 --dataset filopodia/ --direction SA635/ --nm 11g --gamma 0.3 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --models vqclean --lr 0.0005 --netG ed023e --netD patch_16 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 2 --downbranch 2
 
 # remote tracking: --tracking_uri https://mlflow.ntugarylab.dpdns.org/
 
 
+# ---------------------------------------------------------------------------
+# MScleanSup0 on the fused multi-view data (real X/Y projection supervision).
+#
+# Geometry is NOT free here: backward_g asserts XupX and the xcube/ycube views share
+# the same grid, so cropz == cropsize (isotropic cube) and dsp == aniso == 8
+# (net_g upsamples 8x in every axis: 8 * cropz/dsp == cropz only when dsp == 8).
+# Keep --downbranch 1 — downbranch 2 halves the output Z and trips the assert.
+# uprate = 8, divisible by 4 as --lamb_coarse requires. cropsize 192 % aniso 8 == 0.
+#
+# --nm 11g, not the 11p of the old Sup0 recipe: E2507218fuse/ has no norm_stats.json
+# (the one under E2507218cube/ is at the wrong level and that train/ is now empty), and
+# 11p measured as a near no-op on these cubes anyway — topatch.py already min-max'd each
+# view at patch creation, so the per-view affine anchors are pre-aligned. Gamma is
+# monotonic and applied identically to all three views, and MIP commutes with a monotone
+# map, so the default --l1how_xy max stays consistent under 11g.
+#
+# --lamb_xy 1 (below the model default 2) on purpose: measured on this data, only ~5% of
+# l1_x/l1_y is genuine HR-Z signal — the rest is a floor from 1-4 voxel per-file
+# misregistration and per-view PSF/intensity differences, so l1_x/l1_y will plateau high.
+# Run the lamb_xy 0 control before believing any improvement is from the supervision.
+# Pick free GPUs — the TP0727 lines above use 2..7.
 
+# control: identical crops/geometry, supervision off (should reproduce plain MSclean)
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup0/zxy192gf/lambxy0 --env brcb --dataset E2507218fuse/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup0 --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --lamb_xy 0 --aniso 8 --l1how_xy max -b 1 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 301
+
+# stronger supervision, only if lamb_xy 1 shows the loss actually moving off its floor
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup0/zxy192gf/lambxy3 --env brcb --dataset E2507218fuse/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup0 --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --lamb_xy 3 --aniso 8 --l1how_xy max -b 1 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 301
+
+# MScleanSup0 fused-data baseline
+CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup0/zxy192gf/lambxy10 --env brcb --dataset E2507218fuse/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup0 --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --lamb_xy 10 --aniso 8 --l1how_xy mean -b 1 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 501
 
