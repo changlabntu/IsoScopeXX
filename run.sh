@@ -152,3 +152,23 @@
 # MScleanSup0 fused-data baseline
 CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup0/zxy192gf/lambxy10 --env brcb --dataset E2507218fuse/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup0 --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --lamb_xy 10 --aniso 8 --l1how_xy mean -b 1 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 501
 
+
+# ---------------------------------------------------------------------------
+# HISTORICAL — the original vqcleanM0aSup0 launches, recovered verbatim from git
+# (run 1: 08f4500, 2026-06-28; run 2 below: 76c8cd0, 2026-06-29, which also added the
+# held-out val_l1_x/val_l1_y metrics). Both logged to sqlite:////.../logs/mlflow.db,
+# which was trashed 2026-07-03 and is now empty (0 rows) — no metrics, checkpoints or
+# artifacts of these two runs survive anywhere, local or remote.
+#CUDA_VISIBLE_DEVICES=2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuseSup0/vqcleanM0aSup0/Scale4/max1_10_skip4_run2 --env brcb --dataset E2507218fuse/E2507218cube/ --direction zcube_xcube_ycube --lamb 1 --lamb_xy 5 --aniso 8 --nm 11p --models vqcleanM0aSup0 --num_scales 4 --tracking_uri sqlite://///home/gary/workspace/logs/mlflow.db --cropsize 192 --cropz 192 --dsp 8 --lr 0.0005
+#
+# Three things break if this is re-run verbatim:
+#   1. --dataset E2507218fuse/E2507218cube/ — that train/ is now EMPTY; the cubes moved
+#      up to E2507218fuse/train/{zcube,xcube,ycube}, so use --dataset E2507218fuse/.
+#   2. --tracking_uri sqlite://///... predates 5679913 (bare NAME -> $LOGS/NAME.db), so
+#      today it would be taken as a NAME and make a garbage filename. Use MS0728.
+#   3. --nm 11p needs $DATASET/E2507218fuse/norm_stats.json, which is absent (the one
+#      under E2507218cube/ is a level too deep). Measured a near no-op on these cubes
+#      anyway — topatch.py already min-max'd each view — so prefer the 11g line above.
+# Also note vqcleanM0aSup0's --l1how_xy still defaults to 'max'; only MScleanSup0 was
+# switched to 'mean'. See that model's header for why max biases toward blurred X/Y.
+
