@@ -126,7 +126,7 @@ class GAN(BaseModel):
         parser.add_argument("--dsp", type=int, default=1, help='extra downsample rate')
         parser.add_argument("--usp", type=float, default=1.0, help='extra upsample rate')
         parser.add_argument("--downbranch", type=int, default=1)
-        parser.add_argument("--resizebranch", type=int, default=1)
+        parser.add_argument("--resizebranch", type=float, default=1.0)
         parser.add_argument('--lbm_ms_ssim', type=float, default=0, help='weight for ms_ssim loss')
         # Head distillation (the ONLY loss the coarse heads get; cannot touch the trunk)
         parser.add_argument("--lamb_pyr", type=float, default=1.0,

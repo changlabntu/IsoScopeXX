@@ -79,10 +79,17 @@ volumes are `(B, C, Y, X, Z)`, already normalized, on the model's device
 | `.normalize(vol, …)` / `.denormalize(vol, …)` | — | apply / invert the run's `nm` transform |
 | `.device`, `.spec`, `.cfg` | — | device; effective `nm/gamma/gamma_lo`; run config |
 
-`train_mode=True` (default, the `test/` convention) runs the generator
-components in `.train()` (batch-stat BN + MC dropout — each pass is one MC
-draw); the codec stays deterministic (the 2D VQ stack is GroupNorm, dropout
-0). `train_mode=False` gives fully deterministic running-stat inference.
+**`train_mode` must ALWAYS be `True` in testing — never pass `False`.** It is
+the default on both constructors, so omit it. The generator components run in
+`.train()` (batch-stat BN + MC dropout — each pass is one MC draw); the codec
+stays deterministic either way (the 2D VQ stack is GroupNorm, dropout 0).
+
+The reason is not stylistic: these runs train with `--norm batch` at `-b 2`, so
+the BN *running* statistics are accumulated from batches of 2 and are too poorly
+conditioned to reproduce training-time behaviour. `train_mode=False` swaps in
+those bad running stats and silently changes the output. Any figure or
+comparison produced with `train_mode=False` does not follow the convention and
+should be regenerated.
 
 ### `load.py` — checkpoint loading
 Rebuilds a run's `GAN` from its checkpoint snapshot + `config.json` and swaps

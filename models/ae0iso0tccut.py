@@ -118,7 +118,7 @@ class GAN(BaseModel):
         parser.add_argument("--c_mlp", dest='c_mlp', type=int, default=256, help='channel of mlp')
         parser.add_argument('--fWhich', nargs='+', help='which layers to have NCE loss', type=int, default=None)
         parser.add_argument("--downbranch", type=int, default=1)
-        parser.add_argument("--resizebranch", type=int, default=1)
+        parser.add_argument("--resizebranch", type=float, default=1.0)
         return parent_parser
 
     def encode(self, x):
