@@ -115,7 +115,7 @@ Pins checkpoint, `model_file`, epoch and normalization per model name.
 - `get(name)` — the spec dict (a copy).
 - `register(name, **spec)` — add/replace at runtime.
 - `MODELS` — the dict itself. Current entries: **`skipU`** (thx10 MSclean),
-  **`filopodia`** and **`filopodia_g03`** (Chulab SA635 runs, per-run
+  **`sa635`** and **`sa635_g03`** (Chulab SA635 runs, per-run
   `config.json` normalization).
 
 ### `zarr_io.py` — zarr helpers (lazy `tensorstore` import)

@@ -33,32 +33,33 @@ MODELS = {
         epoch=300,                  # 0-1100 available at epoch_save=100
         nm='11g', gamma=0.7, gamma_lo=-0.8,
     ),
-    # filopodia: MSclean run on the Chulab SA635 filopodia patches
-    # (dataset filopodia/, direction SA635/; cropz 48 / cropsize 192 -> uprate 4,
-    # Z 64 -> 256). nm/gamma/gamma_lo omitted so the Engine uses the run's own
-    # config.json (11g, gamma 0.8, gamma_lo -0.85) — the single source of truth.
-    'filopodia': dict(
-        checkpoint='/home/cheese/workspace/logs/filopodia/MSclean/b4/checkpoints/20260720_150240',
+    # sa635: MSclean run on the Chulab SA635 patch set (direction SA635/;
+    # cropz 48 / cropsize 192 -> uprate 4, Z 64 -> 256). nm/gamma/gamma_lo
+    # omitted so the Engine uses the run's own config.json (11g, gamma 0.8,
+    # gamma_lo -0.85) — the single source of truth.
+    'sa635': dict(
+        checkpoint='/home/cheese/workspace/logs/sa635/MSclean/b4/checkpoints/20260720_150240',
         model_file='models/MSclean.py',
         epoch=100,
     ),
-    # filopodia_g03: retrain of the above with a lower training gamma to
-    # preserve dim filopodia detail (config gamma 0.3, gamma_lo -0.9 vs the
-    # 0.8/-0.85 of 'filopodia'). nm/gamma/gamma_lo omitted -> Engine uses the
-    # run's config.json.
-    'filopodia_g03': dict(
-        checkpoint='/home/cheese/workspace/logs/filopodia/MSclean/b4/checkpoints/20260722_143233',
+    # sa635_g03: retrain of the above with a lower training gamma to preserve
+    # dim fine detail (config gamma 0.3, gamma_lo -0.9 vs the 0.8/-0.85 of
+    # 'sa635'). nm/gamma/gamma_lo omitted -> Engine uses the run's config.json.
+    'sa635_g03': dict(
+        checkpoint='/home/cheese/workspace/logs/sa635/MSclean/b4/checkpoints/20260722_143233',
         model_file='models/MSclean.py',
         epoch=300,
     ),
-    # Template for further entries (e.g. a vqclean run, once its weights exist
-    # on this box):
-    # 'vqclean': dict(
-    #     checkpoint='/path/to/vqcleanVQ/experiment',
-    #     model_file='models/vqclean.py',
-    #     epoch=700,
-    #     nm='00',
-    # ),
+    # vqclean: single-VQ baseline (ConvTranspose netG ed023e), trained as the
+    # direct comparator to 'skipU' — same thx10 roiD192gfC recipe (nm 11g,
+    # gamma 0.7/-0.8, 192/24, lamb 5, lr 5e-4, b200) minus the MS flags.
+    # Weights copied to this box 2026-08-04; epochs 0-500 at epoch_save=100.
+    'vqclean': dict(
+        checkpoint='/home/cheese/workspace/logs/vqclean/roiD192gfC/max5skip4/checkpoints/20260804_163952',
+        model_file='models/vqclean.py',
+        epoch=300,                  # match the skipU comparison epoch
+        nm='11g', gamma=0.7, gamma_lo=-0.8,
+    ),
 }
 
 

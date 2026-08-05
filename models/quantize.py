@@ -1,7 +1,7 @@
 """VectorQuantizer2 + optional cosine-normalized codes and dead-code restart.
 
 Both features attack codebook collapse (a few codes doing all the work while
-the rest stay dead) — the failure measured on the filopodia MSclean run, where
+the rest stay dead) — the failure measured on the SA635 MSclean run, where
 the coarse scales used only ~14-36 of 256 codes (perplexity 14-36).
 
 `VectorQuantizerVQR(normalize=False, restart=False)` is behaviourally identical
