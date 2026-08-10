@@ -105,14 +105,35 @@
 # ExM
 #CUDA_VISIBLE_DEVICES=0 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b6 --env b200 --dataset iUExM/ --direction roiA/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 4
 
-# nanotube
-CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/b4Lb10 --env b200 --dataset nanotube/ --direction SA635/ --nm 11g --gamma 0.3 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1  --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 2 --downbranch 2 --vq_normalize --vq_restart --tracking_uri https://mlflow.ntugarylab.dpdns.org/
+# nanotube BEST — recovered from mlflow run 66ca7a2addc64ed1a3a4ac4a94778fbd (exp 16),
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/maxL1_b4Lb5 --env b200 --dataset nanotubeA/ --direction SA635/ --nm 11g --gamma 0.7 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 5 --l1how max --skipl1 1 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpn --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 -b 2 --resizebranch 0.5 --vq_restart --n_epochs 301 --epoch_save 25 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ --n_embed_scales 128,128,256,512
 
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj MSclean/maxL1_b4Lb10_skip4 --env b200 --dataset nanotubeA/ --direction SA635/ --nm 11g --gamma 0.7 --gamma_lo -0.9 --cropsize 192 --cropz 48 --dsp 1 --lamb 10 --l1how max --skipl1 4 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpn --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 -b 2 --resizebranch 0.5 --vq_restart --n_epochs 301 --epoch_save 25 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ --n_embed_scales 128,128,256,512
 
 
 # remote tracking: --tracking_uri https://mlflow.ntugarylab.dpdns.org/
 
+# skipU baseline
+#python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipU/roiD192gfC/max5skip4 --env b200 --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 4
+
+# skipU baseline
+#python train.py --yaml aisr --prj thx10/vqcleanM0aMSskipU/roiD192gfC/max5skip4 --env b200 --dataset THX10SDM20xw/ --direction roiD/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MSclean --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 4
+
+# QD baseline
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/MScleanQD/roiD192gfC/max5skip4 --env b200 --dataset thx10/ --direction roiD/ --nm 11g --gamma 0.7 --gamma_lo -0.8 --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models MScleanQD --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 3 --vq_normalize --vq_restart --n_embed_scales 128,128,256,512
+
+# QD 
+CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/MScleanQD/roiD192gfC/max5skip4 --env b200 --dataset symmetricbead/ --direction CamA/ --nm 11g --gamma 1.0 --gamma_lo -1.0 --cropsize 192 --cropz 48 --dsp 2 --lamb 1 --models MScleanQD --num_scales 4 --lr 0.0002 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 2 --vq_normalize --vq_restart --n_embed_scales 128,128,256,512 --n_epochs 501 --l1how dsp --ema_decay 0
+
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqclean/roiD192gfC/max5skip4 \
+#      --env b200 --dataset thx10/ --direction roiD/ \
+#      --nm 11g --gamma 0.7 --gamma_lo -0.8 \
+#      --cropsize 192 --cropz 24 --dsp 1 --lamb 5 \
+#      --models vqclean --lr 0.0005 \
+#      --netG ed023e --netD patch_16 \
+#      --tracking_uri https://mlflow.ntugarylab.dpdns.org/ -b 4
 
 
 
-
+# QD CUT smoke (MScleanQD2 + PatchNCE, q=generated: NCE gradient flows into net_g; --nocut recovers QD2)
+CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj scratch/QDCUTsmoke --env b200 --dataset symmetricbead/ --direction CamA/ --nm 11g --gamma 1.0 --gamma_lo -1.0 --cropsize 192 --cropz 48 --dsp 2 --models MScleanQDCUT --num_scales 4 --netG ed023emsfpnu --netD patch_16 --l1how dsp --lamb 1 --pyr_detach --adv_ms 0.5 --n_embed_scales 128,128,256,512 --vq_restart -b 2 --lr 0.0002 --n_epochs 2 --tracking_uri https://mlflow.ntugarylab.dpdns.org/
