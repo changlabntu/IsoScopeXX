@@ -1,6 +1,7 @@
 from models.MScleanQD2 import GAN as MScleanQD2GAN
 import torch
 import yaml
+from contextlib import contextmanager
 
 from models.CUT import PatchSampleF3D
 from networks.networks_cut import init_net, PatchNCELoss
@@ -19,10 +20,13 @@ from ldm.modules.ema import LitEma
 # only regularized the 2D encoder. --nocut recovers MScleanQD2 exactly.
 #
 # Tap capture: MSclean.encode() discards the encoder's intermediate features
-# (h, _, _ = self.encoder(x)), so a forward hook on self.encoder stashes
-# hs[1::2] (per-level res-block outputs, channels ch*ch_mult — [64,128,128,256]
-# for vqgan.yaml; the 1::2 pattern assumes num_res_blocks=1). The hook fires on
-# every encoder call; consumers read the stash right after the call they own.
+# (h, _, _ = self.encoder(x)), so a forward hook captures hs[1::2] (per-level
+# res-block outputs, channels ch*ch_mult — [64,128,128,256] for vqgan.yaml;
+# the 1::2 pattern assumes num_res_blocks=1). The hook is TRANSIENT
+# (_tap_capture registers it around the one forward that needs it and removes
+# it immediately): base.py checkpointing pickles whole modules, and a
+# persistent hook closure in encoder._forward_hooks is unpicklable
+# ("Can't pickle local object ... _tap_hook").
 # feat_q uses self.encoder(...) directly — no need to run the residual-VQ loop
 # on generated slices just to read encoder taps.
 #
@@ -44,7 +48,6 @@ class GAN(MScleanQD2GAN):
     def __init__(self, hparams, train_loader, eval_loader, checkpoints):
         MScleanQD2GAN.__init__(self, hparams, train_loader, eval_loader, checkpoints)
 
-        self._cut_taps = None   # raw hs[1::2] of the last encoder call (training only)
         self._k_taps = None     # input-side taps in volume form, set by generation()
 
         if not self.hparams.nocut:
@@ -79,11 +82,6 @@ class GAN(MScleanQD2GAN):
 
             self.netg_names['netF'] = 'netF'
 
-            def _tap_hook(module, inputs, output):
-                if module.training:
-                    self._cut_taps = output[2][1::2]
-            self.encoder.register_forward_hook(_tap_hook)
-
             # Rebuild so opt_ae includes netF's MLPs from the start (PL calls
             # configure_optimizers() again at fit; this keeps self.optimizer_g
             # and the schedulers consistent in the meantime).
@@ -112,28 +110,48 @@ class GAN(MScleanQD2GAN):
                             help='which layers to have NCE loss')
         return parent_parser
 
+    @contextmanager
+    def _tap_capture(self):
+        """Register the tap hook only for the duration of one forward pass.
+
+        The encoder must be hook-free outside this window: base.py's
+        checkpointing torch.save()s the module objects themselves, and a
+        lingering hook closure cannot be pickled.
+        """
+        taps = {}
+        handle = self.encoder.register_forward_hook(
+            lambda module, inputs, output: taps.update(hs=output[2][1::2]))
+        try:
+            yield taps
+        finally:
+            handle.remove()
+
     def generation(self, batch, deterministic=False):
-        super().generation(batch, deterministic)
         if self.training and not self.hparams.nocut:
+            with self._tap_capture() as taps:
+                super().generation(batch, deterministic)
             # feat_k source: encoder taps of the real input slices, folded to
             # (B, C, H, W, Z) volumes (detached inside PatchNCELoss).
             B = self.oriX.shape[0]
-            self._k_taps = [self.slices_to_vol(f, B) for f in self._cut_taps]
+            self._k_taps = [self.slices_to_vol(f, B) for f in taps['hs']]
+        else:
+            super().generation(batch, deterministic)
 
     def backward_g(self):
         loss_dict = super().backward_g()
 
         if not self.hparams.nocut:
-            feat_k = self._k_taps  # grab BEFORE re-encoding overwrites the stash
+            feat_k = self._k_taps
 
             # feat_q: encoder taps of the generated slices at the Z positions
             # aligned with the input slices — WITH grad, this is the NCE path
-            # into net_g. Direct encoder call: the hook captures the taps, the
-            # residual-VQ loop is not needed here.
+            # into net_g. Direct encoder call: the transient hook captures the
+            # taps, the residual-VQ loop is not needed here.
             B = self.XupX.shape[0]
             x = self.XupX[:, :, :, :, (self.uprate // 2)::self.uprate]
-            self.encoder(self.vol_to_slices(x))
-            feat_q = [self.slices_to_vol(f, B) for f in self._cut_taps]
+            with self._tap_capture() as taps:
+                self.encoder(self.vol_to_slices(x))
+            feat_q = [self.slices_to_vol(f, B) for f in taps['hs']]
 
             feat_k_pool, sample_ids = self.netF(feat_k, self.hparams.num_patches, None)
             feat_q_pool, _ = self.netF(feat_q, self.hparams.num_patches, sample_ids)
