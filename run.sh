@@ -62,6 +62,12 @@
 #   MScleanSup0      (MSclean + REAL X/Y projection supervision for the fused multi-view data, ported
 #                     from vqcleanM0aSup0: --direction zcube_xcube_ycube --lamb_xy --aniso 8 --l1how_xy mean;
 #                     no new params, MSclean ckpts load directly. See the fused-data section below)
+#   MScleanSup0a     (Sup0 with the side loss as a fine-Z SPECTRUM match, --xy_mode spec (default) |
+#                     hp | l1; voxel L1 to the views is minimised by blur — see the file header)
+#   MScleanSup1      (fused data with the MEASURED forward model: Gaussian axial PSF --psf_sigma 12 in the
+#                     main l1 (--l1how psf, samples the input's planes) and the side losses, + per-sample
+#                     gain fit --side_gain and +-2 vox shift tolerance --side_shift. Box/max pooling is
+#                     the wrong forward model for these views (PSF FWHM ~28 vox, not 8) — see file header)
 
 # thx vqcleanMH
 #CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj thx10/vqcleanMH/Scale1/max5skip4 --env brcb --dataset THX10SDM20xw/ --direction roiD/ --cropsize 192 --cropz 24 --dsp 1 --lamb 5 --models vqcleanMH --num_scales 1 --lr 0.0002 --netG ed023emsdet --netD patch_16 --tracking_uri thx-MS-384
@@ -173,6 +179,14 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml a
 
 # stronger supervision, only if lamb_xy 1 shows the loss actually moving off its floor
 #CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup0/zxy192gf/lambxy3 --env brcb --dataset E2507218fuse/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup0 --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --lamb_xy 3 --aniso 8 --l1how_xy max -b 1 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 301
+
+# MScleanSup1: PSF forward model (sigma 12) for main l1 + side losses, gain fit, +-2 shift. Controls: same with --lamb_xy 0
+# (PSF main l1 only) and the Sup0 lambxy10 run 5a1258ce (box model). Smoke first: --n_epochs 2.
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup1/zxy192gf/psf12_lambxy5 --env b200 --dataset E2507218zxy/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup1 --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --l1how psf --psf_sigma 12 --lamb_xy 5 --side_gain 1 --side_shift 2 --aniso 8 -b 1 --vq_normalize --vq_restart --tracking_uri https://mlflow.ntugarylab.dpdns.org/ --n_epochs 501
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup1/zxy192gf/psf12_lambxy0 --env b200 --dataset E2507218zxy/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup1 --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --l1how psf --psf_sigma 12 --lamb_xy 0 --aniso 8 -b 1 --vq_normalize --vq_restart --tracking_uri https://mlflow.ntugarylab.dpdns.org/ --n_epochs 501
+
+# MScleanSup0a: side loss = fine-Z spectrum match (lamb_xy re-tuned for log-power units)
+#CUDA_VISIBLE_DEVICES=0,1,2,3 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup0a/zxy192gf/spec1 --env b200 --dataset E2507218zxy/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup0a --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --lamb_xy 1 --aniso 8 --xy_mode spec -b 1 --vq_normalize --vq_restart --tracking_uri https://mlflow.ntugarylab.dpdns.org/ --n_epochs 501
 
 # MScleanSup0 fused-data baseline
 CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7 NO_ALBUMENTATIONS_UPDATE=1 python train.py --yaml aisr --prj fuse/MScleanSup0/zxy192gf/lambxy10 --env brcb --dataset E2507218fuse/ --direction zcube_xcube_ycube --nm 11g --gamma 0.5 --gamma_lo -0.9 --cropsize 192 --cropz 192 --dsp 8 --lamb 5 --models MScleanSup0 --num_scales 4 --lr 0.0005 --netG ed023emsfpnu --netD patch_16 --pyr_detach --adv_ms 0.5 --lamb_coarse 1 --lamb_xy 10 --aniso 8 --l1how_xy mean -b 1 --vq_normalize --vq_restart --tracking_uri MS0728 --n_epochs 501
