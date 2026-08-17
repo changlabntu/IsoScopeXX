@@ -60,6 +60,32 @@ MODELS = {
         epoch=300,                  # match the skipU comparison epoch
         nm='11g', gamma=0.7, gamma_lo=-0.8,
     ),
+    # qdcut: MScleanQDCUT (MScleanQD2 + PatchNCE, q=generated so the NCE
+    # gradient reaches net_g) on symmetricbead/CamA — winner of the 2026-08-10/11
+    # lamb x lbNCE sweep (mlflow exp 30 run f12afb81: lamb 5, lbNCE 5, l1how dsp,
+    # plain VQ + vq_restart, netG ed023emsfpnu). Picked on val_kid/val_lpips_pred/l1
+    # at the epoch_save=100 checkpoints; epoch 500 was the composite best (its
+    # ep400 is the fidelity-leaning fallback). Sibling 024953/024954 dirs are
+    # empty DDP rank stubs; failed sweep runs moved to ../_trash_failed_runs.
+    # nm/gamma omitted -> Engine uses the run's config.json (11g, 1.0, -1.0).
+    'qdcut': dict(
+        checkpoint='/home/cheese/workspace/logs/symmetricbead/scratch/QDCUTsmoke/checkpoints/20260811_024946',
+        model_file='models/MScleanQDCUT.py',
+        epoch=500,
+    ),
+    # skipU_qd: MScleanQD (MSclean + quantizer dropout: p_prefix 0.5, prefix
+    # L1+LPIPS vs pooled target, adv_prefix 0) + the VQ collapse fixes
+    # (--vq_normalize --vq_restart), same thx10 roiD192gfC recipe as 'skipU' —
+    # trained so truncated-prefix decodes (E3) stop being out-of-distribution.
+    # Pinned to the one timestamped dir with weights (siblings are aborted
+    # stubs). Run still training (2026-08-06); epochs 0-300 saved so far at
+    # epoch_save=100 — epoch 300 matches the skipU/vqclean comparison point.
+    'skipU_qd': dict(
+        checkpoint='/home/cheese/workspace/logs/THX10SDM20xw/thx10/MScleanQD/roiD192gfC/max5skip4/checkpoints/20260805_153500',
+        model_file='models/MScleanQD.py',
+        epoch=300,
+        nm='11g', gamma=0.7, gamma_lo=-0.8,
+    ),
 }
 
 
